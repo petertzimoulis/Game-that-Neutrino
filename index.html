@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Game That Neutrino</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="background-glow background-glow-left"></div>
+    <div class="background-glow background-glow-right"></div>
+    <div class="background-grid"></div>
+
+    <div class="page-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Particle Classification Game</p>
+          <h1 class="brand-title">Game That Neutrino</h1>
+        </div>
+
+        <div class="topbar-actions">
+          <button
+            type="button"
+            class="ghost-button"
+            id="home-button"
+            data-action="go-home"
+          >
+            Home
+          </button>
+          <button
+            type="button"
+            class="secondary-button"
+            id="help-button"
+            data-action="open-help"
+          >
+            Tutorial &amp; Help
+          </button>
+          <button
+            type="button"
+            class="ghost-button"
+            id="analysis-button"
+            data-action="open-analysis"
+          >
+            Analysis &amp; Export
+          </button>
+        </div>
+      </header>
+
+      <main id="app" class="app-root" aria-live="polite"></main>
+    </div>
+
+    <div id="help-modal-root"></div>
+    <div id="analysis-modal-root"></div>
+
+    <noscript>
+      <div class="noscript-banner">
+        JavaScript is required to run the neutrino classification game.
+      </div>
+    </noscript>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
