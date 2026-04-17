@@ -642,6 +642,39 @@ button {
   margin-top: 0;
 }
 
+.wager-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.wager-toggle input {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--gold-strong);
+  flex-shrink: 0;
+}
+
+.wager-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.wager-copy strong {
+  font-size: 1rem;
+}
+
+.wager-copy span {
+  color: var(--muted);
+  line-height: 1.45;
+  font-size: 0.92rem;
+}
+
 .choice-button {
   display: grid;
   gap: 10px;

@@ -66,7 +66,7 @@ const SECTIONS = [
     coinMode: true,
     publicLines: false,
     description:
-      "Six shuffled clips with the coin bank live. The player starts this round with 10 coins, every correct answer adds 1 coin, every wrong answer removes 1, and after 2 straight correct coin picks the hot-hand bonus pays 2 coins on each next consecutive correct pick.",
+      "Six shuffled clips with the coin bank live. The player starts this round with 10 coins, every correct answer adds 1 coin, every wrong answer removes 1, after 2 straight correct coin picks the hot-hand bonus pays 2 coins on each next consecutive correct pick, and players can check Double or Nothing to risk bigger swings on a single clip.",
   },
   {
     id: "market",
@@ -77,7 +77,7 @@ const SECTIONS = [
     coinMode: true,
     publicLines: true,
     description:
-      "The final six shuffled clips keep the coin rules, continue the hot-hand bonus, and also show the public Track vs Cascade split, seeded with historical test picks and updated by live completed runs.",
+      "The final six shuffled clips keep the coin rules, continue the hot-hand bonus, allow the same Double or Nothing wager, and also show the public Track vs Cascade split, seeded with historical test picks and updated by live completed runs.",
   },
 ];
 
@@ -245,11 +245,11 @@ function renderLandingView() {
             </div>
             <div class="feature-chip">
               <strong>Group 2</strong>
-              <span>6 shuffled coin clips. Start with 10 coins, gain 1 for right picks, lose 1 for wrong ones, and hit a hot-hand bonus after 2 straight coin wins.</span>
+              <span>6 shuffled coin clips. Start with 10 coins, gain 1 for right picks, lose 1 for wrong ones, hit a hot-hand bonus after 2 straight coin wins, and optionally wager Double or Nothing.</span>
             </div>
             <div class="feature-chip">
               <strong>Group 3</strong>
-              <span>6 shuffled market clips with coin scoring, the same streak bonus, and seeded Track and Cascade public lines.</span>
+              <span>6 shuffled market clips with coin scoring, the same streak bonus, an optional Double or Nothing wager, and seeded Track and Cascade public lines.</span>
             </div>
           </div>
 
@@ -388,6 +388,20 @@ function renderQuestionView(run) {
                 <p class="subtle-copy decision-copy">${section.description}</p>
               </div>
 
+              ${
+                section.coinMode
+                  ? `
+                    <label class="wager-toggle" for="double-down-toggle">
+                      <input id="double-down-toggle" type="checkbox" data-double-down />
+                      <span class="wager-copy">
+                        <strong>Double or Nothing</strong>
+                        <span>Wrong: -2 coins. Correct: +2 coins. Hot-hand correct: +3 coins.</span>
+                      </span>
+                    </label>
+                  `
+                  : ""
+              }
+
               <div class="choice-grid choice-grid-compact">
                 ${renderChoiceButton({
                   choice: "track",
@@ -418,7 +432,7 @@ function renderQuestionView(run) {
               <div class="mini-card compact-card">
                 <span>Scoring mode</span>
                 <strong>${section.coinMode ? "Coin round live" : "Control only"}</strong>
-                <p>${section.coinMode ? "Correct picks add 1 coin and wrong picks lose 1 coin. After 2 straight correct coin picks, each next consecutive correct pick earns 2 coins until the streak breaks." : "This opening control section checks classification without changing the coin bank."}</p>
+                <p>${section.coinMode ? "Correct picks add 1 coin and wrong picks lose 1 coin. After 2 straight correct coin picks, each next consecutive correct pick earns 2 coins until the streak breaks. Double or Nothing changes one clip to -2 on a miss, +2 on a normal hit, or +3 on a streak hit." : "This opening control section checks classification without changing the coin bank."}</p>
               </div>
               <div class="mini-card compact-card">
                 <span>${section.publicLines ? "Public line" : "Answer key"}</span>
@@ -446,12 +460,17 @@ function renderFeedbackView(run) {
   const feedbackSummary = answer.correct
     ? `${titleCase(answer.choice)} matches the answer key.`
     : `Correct answer: ${titleCase(expectedChoice)}.`;
+  const wagerCopy = answer.doubleDown
+    ? answer.streakBonusApplied
+      ? "Double or Nothing and the hot-hand streak were both active."
+      : "Double or Nothing was active on this pick."
+    : "";
   const coinMovementCopy =
     coinDelta === null
       ? "Control-round answers do not touch the wallet."
       : answer.streakBonusApplied
-        ? `Wallet moved from ${answer.coinsBefore} to ${answer.coinsAfter}. Hot-hand bonus activated on ${formatOrdinal(answer.streakAfter)} straight correct coin pick.`
-        : `Wallet moved from ${answer.coinsBefore} to ${answer.coinsAfter}.`;
+        ? `Wallet moved from ${answer.coinsBefore} to ${answer.coinsAfter}. Hot-hand bonus activated on ${formatOrdinal(answer.streakAfter)} straight correct coin pick.${wagerCopy ? ` ${wagerCopy}` : ""}`
+        : `Wallet moved from ${answer.coinsBefore} to ${answer.coinsAfter}.${wagerCopy ? ` ${wagerCopy}` : ""}`;
 
   return `
     <section class="panel appear">
@@ -1126,6 +1145,7 @@ function handleChoice(choice) {
   const correct = isAnswerCorrect(video.id, choice);
   const publicLines = section.publicLines ? getPublicLines(video.id, state.players) : null;
   const timing = getCurrentQuestionTiming(run.questionStartedAt);
+  const doubleDown = section.coinMode ? isDoubleDownSelected() : false;
 
   let coinsBefore = null;
   let coinsAfter = null;
@@ -1140,10 +1160,14 @@ function handleChoice(choice) {
     if (correct) {
       streakBonusApplied = streakBefore >= 2;
       streakAfter = streakBefore + 1;
-      coinsAfter = coinsBefore + (streakBonusApplied ? 2 : 1);
+      coinsAfter = coinsBefore + (
+        doubleDown
+          ? (streakBonusApplied ? 3 : 2)
+          : (streakBonusApplied ? 2 : 1)
+      );
     } else {
       streakAfter = 0;
-      coinsAfter = coinsBefore - 1;
+      coinsAfter = coinsBefore - (doubleDown ? 2 : 1);
     }
 
     run.coins = coinsAfter;
@@ -1160,6 +1184,7 @@ function handleChoice(choice) {
     correct,
     coinsBefore,
     coinsAfter,
+    doubleDown,
     streakBefore,
     streakAfter,
     streakBonusApplied,
@@ -1362,6 +1387,10 @@ function getSectionForIndex(index) {
 
 function getSectionById(sectionId) {
   return SECTIONS.find((section) => section.id === sectionId) || null;
+}
+
+function isDoubleDownSelected() {
+  return Boolean(document.querySelector("[data-double-down]")?.checked);
 }
 
 function getVisibleCoins(run, section) {
