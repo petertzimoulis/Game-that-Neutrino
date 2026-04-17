@@ -484,6 +484,10 @@ button {
 .section-pill {
   display: inline-flex;
   align-items: center;
+  justify-self: start;
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 10px 14px;
   border-radius: 999px;
@@ -508,6 +512,7 @@ button {
   display: grid;
   gap: 14px;
   min-height: 0;
+  align-content: start;
 }
 
 .video-shell {
@@ -521,7 +526,8 @@ button {
 }
 
 .game-video-shell {
-  height: 100%;
+  height: auto;
+  min-height: 0;
   padding: 8px;
 }
 
