@@ -9,44 +9,75 @@ const VIDEO_PLAYBACK_RATE = 2;
 const PLAYER_SYNC_INTERVAL_MS = 15000;
 
 const ANSWER_KEY = {
-  // Fill these in later with entries like:
-  // Video1: "track",
-  // Video2: "cascade",
+  Video1: "cascade",
+  Video2: "track",
+  Video3: "track",
+  Video4: "cascade",
+  Video5: "track",
+  Video6: "cascade",
+  Video7: "track",
+  Video8: "track",
+  Video9: "track",
+  Video10: "track",
+  Video11: "track",
+  Video12: "track",
+  Video13: "track",
+  Video14: "cascade",
+  Video15: "cascade",
+};
+
+const SEEDED_PUBLIC_LINE_COUNTS = {
+  // Historical test picks supplied by the user to open the public lines with a real baseline.
+  Video1: { trackCount: 9, cascadeCount: 5 },
+  Video2: { trackCount: 3, cascadeCount: 11 },
+  Video3: { trackCount: 7, cascadeCount: 7 },
+  Video4: { trackCount: 7, cascadeCount: 7 },
+  Video5: { trackCount: 7, cascadeCount: 7 },
+  Video6: { trackCount: 8, cascadeCount: 6 },
+  Video7: { trackCount: 7, cascadeCount: 7 },
+  Video8: { trackCount: 7, cascadeCount: 7 },
+  Video9: { trackCount: 6, cascadeCount: 8 },
+  Video10: { trackCount: 2, cascadeCount: 12 },
+  Video11: { trackCount: 10, cascadeCount: 4 },
+  Video12: { trackCount: 6, cascadeCount: 8 },
+  Video13: { trackCount: 11, cascadeCount: 3 },
+  Video14: { trackCount: 10, cascadeCount: 4 },
+  Video15: { trackCount: 11, cascadeCount: 3 },
 };
 
 const SECTIONS = [
   {
     id: "tutorial",
     label: "Group 1",
-    title: "Tutorial Warm-Up",
+    title: "Control Round",
     startIndex: 0,
-    endIndex: 4,
+    endIndex: 2,
     coinMode: false,
     publicLines: false,
     description:
-      "Five warm-up clips. Players choose Track or Cascade one video at a time, and every answer counts as correct for now.",
+      "Three control clips appear first in a shuffled run order. Players choose Track or Cascade and get immediate correctness feedback, but the coin bank stays closed.",
   },
   {
     id: "coins",
     label: "Group 2",
     title: "Coin Round",
-    startIndex: 5,
-    endIndex: 9,
+    startIndex: 3,
+    endIndex: 8,
     coinMode: true,
     publicLines: false,
     description:
-      "The player gets 10 coins at the start of this round. Every correct answer adds 1 coin, and every wrong answer removes 1.",
+      "Six shuffled clips with the coin bank live. The player starts this round with 10 coins, every correct answer adds 1 coin, every wrong answer removes 1, and after 2 straight correct coin picks the hot-hand bonus pays 2 coins on each next consecutive correct pick.",
   },
   {
     id: "market",
     label: "Group 3",
     title: "Public Lines",
-    startIndex: 10,
+    startIndex: 9,
     endIndex: 14,
     coinMode: true,
     publicLines: true,
     description:
-      "Same coin rules, but now every video shows the current Track vs Cascade public split like a betting line.",
+      "The final six shuffled clips keep the coin rules, continue the hot-hand bonus, and also show the public Track vs Cascade split, seeded with historical test picks and updated by live completed runs.",
   },
 ];
 
@@ -60,6 +91,10 @@ const VIDEOS = Array.from({ length: 15 }, (_, index) => {
     questionNumber: videoNumber,
   };
 });
+
+const VIDEOS_BY_ID = Object.fromEntries(
+  VIDEOS.map((video) => [video.id, video]),
+);
 
 const state = {
   players: [],
@@ -172,6 +207,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 function render() {
+  ensureCurrentRunVideoOrder();
   ensureQuestionStartedAt();
   updateAnalysisButton();
   appRoot.innerHTML = state.currentRun
@@ -197,23 +233,23 @@ function renderLandingView() {
           <p class="eyebrow">15 videos. 3 escalating rounds.</p>
           <h2 class="hero-title">Classify the event. Read the line. Build the board.</h2>
           <p class="hero-copy">
-            Players enter a name, work through 15 neutrino clips in groups of 5, and finish on a
-            shared leaderboard. The tutorial teaches the Track vs Cascade choice, the middle round
-            introduces the coin wallet, and the final round layers in public percentage lines.
+            Players enter a name, get a fresh shuffled order of all 15 neutrino clips, and finish
+            on a shared leaderboard. The first 3 clips are control only, the next 6 open the coin
+            wallet, and the final 6 layer in public percentage lines seeded from past test picks.
           </p>
 
           <div class="feature-strip">
             <div class="feature-chip">
               <strong>Group 1</strong>
-              <span>Tutorial only: one video at a time with Track and Cascade buttons.</span>
+              <span>3 control clips with simple Track or Cascade choices and no coin movement.</span>
             </div>
             <div class="feature-chip">
               <strong>Group 2</strong>
-              <span>Start with 10 coins. Every correct answer adds 1. Every wrong answer loses 1.</span>
+              <span>6 shuffled coin clips. Start with 10 coins, gain 1 for right picks, lose 1 for wrong ones, and hit a hot-hand bonus after 2 straight coin wins.</span>
             </div>
             <div class="feature-chip">
               <strong>Group 3</strong>
-              <span>Show the crowd split for Track and Cascade before the player picks.</span>
+              <span>6 shuffled market clips with coin scoring, the same streak bonus, and seeded Track and Cascade public lines.</span>
             </div>
           </div>
 
@@ -232,7 +268,7 @@ function renderLandingView() {
                 required
               />
               <div class="button-row">
-                <button type="submit" class="primary-button">Start 15-video run</button>
+                <button type="submit" class="primary-button">Start randomized 15-video run</button>
                 <button type="button" class="secondary-button" data-action="open-help">
                   Learn Track vs Cascade
                 </button>
@@ -240,8 +276,8 @@ function renderLandingView() {
             </form>
 
             <p class="subtle-copy">
-              For now, the answer key is a placeholder and every response is marked correct until
-              you send the real Track/Cascade labels.
+              The full 15-video answer key is live, so scores, coins, leaderboard standings, and
+              analysis accuracy now use the real Track/Cascade labels.
             </p>
           </div>
         </div>
@@ -294,9 +330,11 @@ function renderRunView(run) {
 
 function renderQuestionView(run) {
   const section = getSectionForIndex(run.currentIndex);
-  const video = VIDEOS[run.currentIndex];
+  const video = getVideoForRunIndex(run, run.currentIndex);
   const currentCoins = getVisibleCoins(run, section);
   const questionInSection = run.currentIndex - section.startIndex + 1;
+  const sectionQuestionCount = getSectionQuestionCount(section);
+  const overallQuestionNumber = run.currentIndex + 1;
   const lines = section.publicLines ? getPublicLines(video.id, state.players) : null;
 
   return `
@@ -306,7 +344,7 @@ function renderQuestionView(run) {
           <div class="game-heading-block">
             <p class="eyebrow">${section.label}</p>
             <h2 class="hero-title">${section.title}</h2>
-            <p class="game-copy">${video.label} • Question ${questionInSection} of 5 in this group</p>
+            <p class="game-copy">Clip ${overallQuestionNumber} of ${VIDEOS.length} • Question ${questionInSection} of ${sectionQuestionCount} in this group</p>
           </div>
 
           <div class="status-strip status-strip-compact">
@@ -316,7 +354,7 @@ function renderQuestionView(run) {
             </div>
             <div class="stat-card">
               <span>Question</span>
-              <strong>${video.questionNumber} / ${VIDEOS.length}</strong>
+              <strong>${overallQuestionNumber} / ${VIDEOS.length}</strong>
             </div>
             <div class="wallet-card">
               <span>Coin Bank</span>
@@ -335,7 +373,7 @@ function renderQuestionView(run) {
           <div class="video-column">
             <div class="section-pill section-pill-compact">
               <strong>${video.label}</strong>
-              <span>${section.coinMode ? "Live scoring active" : "Tutorial scoring"}</span>
+              <span>${section.publicLines ? "Coins and public line live" : section.coinMode ? "Coin scoring live" : "Control round"}</span>
             </div>
 
             <div class="video-shell game-video-shell">
@@ -379,13 +417,13 @@ function renderQuestionView(run) {
             <div class="decision-meta-grid">
               <div class="mini-card compact-card">
                 <span>Scoring mode</span>
-                <strong>${section.coinMode ? "Coin round live" : "Tutorial only"}</strong>
-                <p>${section.coinMode ? "Correct picks add 1 coin and wrong picks lose 1 coin." : "This section is for learning the Track vs Cascade choice flow."}</p>
+                <strong>${section.coinMode ? "Coin round live" : "Control only"}</strong>
+                <p>${section.coinMode ? "Correct picks add 1 coin and wrong picks lose 1 coin. After 2 straight correct coin picks, each next consecutive correct pick earns 2 coins until the streak breaks." : "This opening control section checks classification without changing the coin bank."}</p>
               </div>
               <div class="mini-card compact-card">
                 <span>${section.publicLines ? "Public line" : "Answer key"}</span>
-                <strong>${section.publicLines ? "Built into each pick" : "Placeholder enabled"}</strong>
-                <p>${section.publicLines ? "Track and Cascade percentages are now part of the answer cards themselves." : "Every answer is currently counted as correct until the real labels are added."}</p>
+                <strong>${section.publicLines ? "Built into each pick" : "Live scoring"}</strong>
+                <p>${section.publicLines ? "Track and Cascade percentages are part of the answer cards and open with the seeded historical baseline for that clip." : "Each pick is checked against the saved answer key for the current clip."}</p>
               </div>
             </div>
           </div>
@@ -400,6 +438,20 @@ function renderFeedbackView(run) {
   const isFinalQuestion = run.currentIndex === VIDEOS.length - 1;
   const coinDelta = typeof answer.coinsAfter === "number" ? answer.coinsAfter - answer.coinsBefore : null;
   const nextLabel = isFinalQuestion ? "Finish and show leaderboard" : "Next video";
+  const expectedChoice = ANSWER_KEY[answer.videoId] || answer.choice;
+  const answerSection = getSectionById(answer.sectionId);
+  const sectionQuestionCount = answerSection
+    ? getSectionQuestionCount(answerSection)
+    : answer.sectionQuestionNumber;
+  const feedbackSummary = answer.correct
+    ? `${titleCase(answer.choice)} matches the answer key.`
+    : `Correct answer: ${titleCase(expectedChoice)}.`;
+  const coinMovementCopy =
+    coinDelta === null
+      ? "Control-round answers do not touch the wallet."
+      : answer.streakBonusApplied
+        ? `Wallet moved from ${answer.coinsBefore} to ${answer.coinsAfter}. Hot-hand bonus activated on ${formatOrdinal(answer.streakAfter)} straight correct coin pick.`
+        : `Wallet moved from ${answer.coinsBefore} to ${answer.coinsAfter}.`;
 
   return `
     <section class="panel appear">
@@ -408,8 +460,8 @@ function renderFeedbackView(run) {
           <p class="eyebrow">${answer.sectionLabel}</p>
           <h2 class="hero-title">${answer.videoLabel}: locked in</h2>
           <div class="feedback-pill ${answer.correct ? "" : "loss"}">
-            <strong>${answer.correct ? "Marked correct" : "Marked wrong"}</strong>
-            <span>${answer.correct ? "This prototype currently treats all answers as correct." : "This will flip once the real key is added."}</span>
+            <strong>${answer.correct ? "Correct call" : "Marked wrong"}</strong>
+            <span>${feedbackSummary}</span>
           </div>
         </div>
 
@@ -422,18 +474,12 @@ function renderFeedbackView(run) {
           <div class="feedback-card">
             <span>Question progress</span>
             <strong>${answer.questionNumber} / ${VIDEOS.length}</strong>
-            <p>${answer.sectionLabel}, question ${answer.sectionQuestionNumber} of 5.</p>
+            <p>${answer.sectionLabel}, question ${answer.sectionQuestionNumber} of ${sectionQuestionCount}.</p>
           </div>
           <div class="feedback-card">
             <span>Coin movement</span>
             <strong>${coinDelta === null ? "No wallet yet" : `${coinDelta > 0 ? "+" : ""}${coinDelta} coin${Math.abs(coinDelta) === 1 ? "" : "s"}`}</strong>
-            <p>
-              ${
-                coinDelta === null
-                  ? "Tutorial answers do not touch the wallet."
-                  : `Wallet moved from ${answer.coinsBefore} to ${answer.coinsAfter}.`
-              }
-            </p>
+            <p>${coinMovementCopy}</p>
           </div>
         </div>
 
@@ -488,7 +534,7 @@ function renderResultsView(run) {
               <p>${stats.totalCorrect} of ${stats.totalQuestions} correct.</p>
             </div>
             <div class="summary-card">
-              <span>Tutorial</span>
+              <span>Control</span>
               <strong>${formatPercent(stats.sectionStats.tutorial.accuracy)}</strong>
               <p>${stats.sectionStats.tutorial.correct} of ${stats.sectionStats.tutorial.total} correct.</p>
             </div>
@@ -626,12 +672,12 @@ function renderAnalysisModal() {
                   title: "Per-user summary",
                   note: "Use this table for total user performance, final coin score, section accuracy, and average decision timing.",
                   report: "user-summary",
-                  headers: ["Player", "Coins", "Total Accuracy", "Tutorial Accuracy", "Coin Round Accuracy", "Public Lines Accuracy", "Avg Response Time", "Avg Clip Time At Pick", "After Half Rate", "Completed"],
+                  headers: ["Player", "Coins", "Total Accuracy", "Control Accuracy", "Coin Round Accuracy", "Public Lines Accuracy", "Avg Response Time", "Avg Clip Time At Pick", "After Half Rate", "Completed"],
                   rows: summaryRows.map((row) => [
                     escapeHtml(row.name),
                     row.finalCoins,
                     formatPercent(row.totalAccuracy),
-                    formatPercent(row.tutorialAccuracy),
+                    formatPercent(row.controlAccuracy),
                     formatPercent(row.coinAccuracy),
                     formatPercent(row.marketAccuracy),
                     formatSeconds(row.averageResponseSeconds),
@@ -643,7 +689,7 @@ function renderAnalysisModal() {
 
                 ${renderAnalysisTable({
                   title: "Per-user group breakdown",
-                  note: "One row per user per 5-video group so you can graph group-level accuracy separately.",
+                  note: "One row per user per section so you can graph the 3-control, 6-coin, and 6-public-line groups separately.",
                   report: "group-breakdown",
                   headers: ["Player", "Group", "Correct", "Total", "Accuracy", "Completed"],
                   rows: groupRows.map((row) => [
@@ -658,7 +704,7 @@ function renderAnalysisModal() {
 
                 ${renderAnalysisTable({
                   title: "Per-video public response lines",
-                  note: "Tracks total public picks, Track percentage, Cascade percentage, and accuracy for every video.",
+                  note: "Tracks seeded test picks plus completed live picks, then shows Track percentage, Cascade percentage, and overall pick accuracy for every video.",
                   report: "video-lines",
                   headers: ["Video", "Track Picks", "Cascade Picks", "Track %", "Cascade %", "Attempts", "Accuracy"],
                   rows: videoRows.map((row) => [
@@ -891,8 +937,8 @@ function renderChoiceButton({
 }) {
   const hasPublicLine = typeof percentage === "number";
   const responsesLabel = totalResponses
-    ? `${totalResponses} completed pick${totalResponses === 1 ? "" : "s"}`
-    : "opens at 50/50 until a run finishes this clip";
+    ? `${totalResponses} public pick${totalResponses === 1 ? "" : "s"}`
+    : "opens at 50/50 if no public picks are stored yet";
 
   return `
     <button
@@ -1055,6 +1101,7 @@ function beginRun(rawName) {
     id: `run-${Date.now()}`,
     name,
     nameKey: normalizeName(name),
+    videoOrder: shuffleArray(VIDEOS.map((video) => video.id)),
     currentIndex: 0,
     phase: "question",
     answers: [],
@@ -1075,24 +1122,37 @@ function handleChoice(choice) {
   }
 
   const section = getSectionForIndex(run.currentIndex);
-  const video = VIDEOS[run.currentIndex];
+  const video = getVideoForRunIndex(run, run.currentIndex);
   const correct = isAnswerCorrect(video.id, choice);
   const publicLines = section.publicLines ? getPublicLines(video.id, state.players) : null;
   const timing = getCurrentQuestionTiming(run.questionStartedAt);
 
   let coinsBefore = null;
   let coinsAfter = null;
+  let streakBefore = null;
+  let streakAfter = null;
+  let streakBonusApplied = false;
 
   if (section.coinMode) {
+    streakBefore = getCoinCorrectStreak(run.answers);
     coinsBefore = typeof run.coins === "number" ? run.coins : 10;
-    coinsAfter = coinsBefore + (correct ? 1 : -1);
+
+    if (correct) {
+      streakBonusApplied = streakBefore >= 2;
+      streakAfter = streakBefore + 1;
+      coinsAfter = coinsBefore + (streakBonusApplied ? 2 : 1);
+    } else {
+      streakAfter = 0;
+      coinsAfter = coinsBefore - 1;
+    }
+
     run.coins = coinsAfter;
   }
 
   run.answers.push({
     videoId: video.id,
     videoLabel: video.label,
-    questionNumber: video.questionNumber,
+    questionNumber: run.currentIndex + 1,
     sectionId: section.id,
     sectionLabel: `${section.label}: ${section.title}`,
     sectionQuestionNumber: run.currentIndex - section.startIndex + 1,
@@ -1100,6 +1160,9 @@ function handleChoice(choice) {
     correct,
     coinsBefore,
     coinsAfter,
+    streakBefore,
+    streakAfter,
+    streakBonusApplied,
     publicLines,
     questionStartedAt: timing.questionStartedAt,
     answeredAt: timing.answeredAt,
@@ -1220,9 +1283,9 @@ function buildUserSummaryRows(players) {
     name: player.name,
     finalCoins: player.finalCoins,
     totalAccuracy: player.totalAccuracy,
-    tutorialAccuracy: player.sectionStats.tutorial.accuracy,
-    coinAccuracy: player.sectionStats.coins.accuracy,
-    marketAccuracy: player.sectionStats.market.accuracy,
+    controlAccuracy: getPlayerSectionStat(player, "tutorial").accuracy,
+    coinAccuracy: getPlayerSectionStat(player, "coins").accuracy,
+    marketAccuracy: getPlayerSectionStat(player, "market").accuracy,
     averageResponseSeconds: averageOfValues(
       player.answers.map((answer) => answer.responseSeconds),
     ),
@@ -1239,9 +1302,9 @@ function buildGroupRows(players) {
     SECTIONS.map((section) => ({
       name: player.name,
       groupLabel: `${section.label}: ${section.title}`,
-      correct: player.sectionStats[section.id].correct,
-      total: player.sectionStats[section.id].total,
-      accuracy: player.sectionStats[section.id].accuracy,
+      correct: getPlayerSectionStat(player, section.id).correct,
+      total: getPlayerSectionStat(player, section.id).total,
+      accuracy: getPlayerSectionStat(player, section.id).accuracy,
       completedAt: player.completedAt,
     })),
   );
@@ -1249,25 +1312,16 @@ function buildGroupRows(players) {
 
 function buildVideoRows(players) {
   return VIDEOS.map((video) => {
-    const answers = players.flatMap((player) =>
-      player.answers.filter((answer) => answer.videoId === video.id),
-    );
-    const trackCount = answers.filter((answer) => answer.choice === "track").length;
-    const cascadeCount = answers.filter((answer) => answer.choice === "cascade").length;
-    const totalResponses = answers.length;
-    const correctCount = answers.filter((answer) => answer.correct).length;
-    const trackPercentage = totalResponses ? trackCount / totalResponses : 0.5;
-    const cascadePercentage = totalResponses ? cascadeCount / totalResponses : 0.5;
-    const accuracy = totalResponses ? correctCount / totalResponses : 0;
+    const summary = getCombinedVideoLineStats(video.id, players);
 
     return {
       videoLabel: video.label,
-      trackCount,
-      cascadeCount,
-      trackPercentage,
-      cascadePercentage,
-      totalResponses,
-      accuracy,
+      trackCount: summary.trackCount,
+      cascadeCount: summary.cascadeCount,
+      trackPercentage: summary.trackPercentage,
+      cascadePercentage: summary.cascadePercentage,
+      totalResponses: summary.totalResponses,
+      accuracy: summary.accuracy,
     };
   });
 }
@@ -1291,25 +1345,12 @@ function buildTimingRows(players) {
 }
 
 function getPublicLines(videoId, players) {
-  const answers = players.flatMap((player) =>
-    player.answers.filter((answer) => answer.videoId === videoId),
-  );
-  const totalResponses = answers.length;
-  const trackCount = answers.filter((answer) => answer.choice === "track").length;
-  const cascadeCount = answers.filter((answer) => answer.choice === "cascade").length;
-
-  if (!totalResponses) {
-    return {
-      trackPercentage: 0.5,
-      cascadePercentage: 0.5,
-      totalResponses: 0,
-    };
-  }
+  const summary = getCombinedVideoLineStats(videoId, players);
 
   return {
-    trackPercentage: trackCount / totalResponses,
-    cascadePercentage: cascadeCount / totalResponses,
-    totalResponses,
+    trackPercentage: summary.trackPercentage,
+    cascadePercentage: summary.cascadePercentage,
+    totalResponses: summary.totalResponses,
   };
 }
 
@@ -1319,12 +1360,54 @@ function getSectionForIndex(index) {
   );
 }
 
+function getSectionById(sectionId) {
+  return SECTIONS.find((section) => section.id === sectionId) || null;
+}
+
 function getVisibleCoins(run, section) {
   if (!section.coinMode && typeof run.coins !== "number") {
     return null;
   }
 
   return typeof run.coins === "number" ? run.coins : 10;
+}
+
+function getSectionQuestionCount(section) {
+  return section.endIndex - section.startIndex + 1;
+}
+
+function ensureCurrentRunVideoOrder() {
+  if (!state.currentRun) {
+    return;
+  }
+
+  if (
+    Array.isArray(state.currentRun.videoOrder) &&
+    state.currentRun.videoOrder.length === VIDEOS.length
+  ) {
+    return;
+  }
+
+  state.currentRun.videoOrder = VIDEOS.map((video) => video.id);
+  saveStorage(STORAGE_KEYS.currentRun, state.currentRun);
+}
+
+function getVideoForRunIndex(run, index) {
+  const videoId = Array.isArray(run?.videoOrder) ? run.videoOrder[index] : null;
+  return VIDEOS_BY_ID[videoId] || VIDEOS[index];
+}
+
+function shuffleArray(items) {
+  const nextItems = [...items];
+
+  for (let index = nextItems.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    const currentItem = nextItems[index];
+    nextItems[index] = nextItems[swapIndex];
+    nextItems[swapIndex] = currentItem;
+  }
+
+  return nextItems;
 }
 
 function ensureQuestionStartedAt() {
@@ -1396,6 +1479,78 @@ function isAnswerCorrect(videoId, choice) {
   return expected === choice;
 }
 
+function getCoinCorrectStreak(answers) {
+  let streak = 0;
+
+  for (let index = answers.length - 1; index >= 0; index -= 1) {
+    const answer = answers[index];
+
+    if (typeof answer.coinsAfter !== "number") {
+      continue;
+    }
+
+    if (!answer.correct) {
+      break;
+    }
+
+    streak += 1;
+  }
+
+  return streak;
+}
+
+function getPlayerSectionStat(player, sectionId) {
+  return player.sectionStats?.[sectionId] || {
+    correct: 0,
+    total: 0,
+    accuracy: 0,
+  };
+}
+
+function getSeededLineCounts(videoId) {
+  return SEEDED_PUBLIC_LINE_COUNTS[videoId] || {
+    trackCount: 0,
+    cascadeCount: 0,
+  };
+}
+
+function getCombinedVideoLineStats(videoId, players) {
+  const seededCounts = getSeededLineCounts(videoId);
+  const answers = players.flatMap((player) =>
+    player.answers.filter((answer) => answer.videoId === videoId),
+  );
+  const liveTrackCount = answers.filter((answer) => answer.choice === "track").length;
+  const liveCascadeCount = answers.filter((answer) => answer.choice === "cascade").length;
+  const trackCount = seededCounts.trackCount + liveTrackCount;
+  const cascadeCount = seededCounts.cascadeCount + liveCascadeCount;
+  const totalResponses = trackCount + cascadeCount;
+  const liveCorrectCount = answers.filter((answer) => answer.correct).length;
+  const seededCorrectCount = getSeededCorrectCount(videoId, seededCounts);
+
+  return {
+    trackCount,
+    cascadeCount,
+    totalResponses,
+    trackPercentage: totalResponses ? trackCount / totalResponses : 0.5,
+    cascadePercentage: totalResponses ? cascadeCount / totalResponses : 0.5,
+    accuracy: totalResponses
+      ? (seededCorrectCount + liveCorrectCount) / totalResponses
+      : 0,
+  };
+}
+
+function getSeededCorrectCount(videoId, seededCounts) {
+  if (ANSWER_KEY[videoId] === "track") {
+    return seededCounts.trackCount;
+  }
+
+  if (ANSWER_KEY[videoId] === "cascade") {
+    return seededCounts.cascadeCount;
+  }
+
+  return 0;
+}
+
 function upsertPlayerRecord(players, playerRecord) {
   const existingIndex = players.findIndex(
     (player) => player.nameKey === playerRecord.nameKey,
@@ -1431,7 +1586,7 @@ function downloadCsv(report) {
         player: row.name,
         coins: row.finalCoins,
         total_accuracy: decimalPercent(row.totalAccuracy),
-        tutorial_accuracy: decimalPercent(row.tutorialAccuracy),
+        control_accuracy: decimalPercent(row.controlAccuracy),
         coin_round_accuracy: decimalPercent(row.coinAccuracy),
         public_lines_accuracy: decimalPercent(row.marketAccuracy),
         average_response_seconds: row.averageResponseSeconds,
@@ -1532,6 +1687,31 @@ function csvEscape(value) {
 
 function decimalPercent(value) {
   return Number((value * 100).toFixed(2));
+}
+
+function formatOrdinal(value) {
+  const numericValue = Number(value);
+
+  if (!Number.isFinite(numericValue)) {
+    return "";
+  }
+
+  const modHundred = numericValue % 100;
+
+  if (modHundred >= 11 && modHundred <= 13) {
+    return `${numericValue}th`;
+  }
+
+  switch (numericValue % 10) {
+    case 1:
+      return `${numericValue}st`;
+    case 2:
+      return `${numericValue}nd`;
+    case 3:
+      return `${numericValue}rd`;
+    default:
+      return `${numericValue}th`;
+  }
 }
 
 function formatPercent(value) {
