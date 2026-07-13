@@ -1,0 +1,6 @@
+video,#Run_Number,#EventID,#InteractionType,#PID,#DeepCoreQTotal,!TrackOrCascade
+run120000_event8960_rot80deg_slowmo14.mp4,120000,8960,1,0.214,25,Track
+run120000_event9944_rot80deg_slowmo14.mp4,120000,9944,1,0.74,22,Track
+run120000_event15443_rot80deg_slowmo14.mp4,120000,15443,2,0.145,23,Cascade
+run120000_event28476_rot80deg_slowmo14.mp4,120000,28476,2,0.263,26,Cascade
+run120000_event39598_rot80deg_slowmo14.mp4,120000,39598,2,0.264,24,Cascade

@@ -7,94 +7,50 @@ const API_PLAYERS_URL = "/api/players";
 const COIN_ICON_SRC = "coin.png";
 const VIDEO_PLAYBACK_RATE = 2;
 const PLAYER_SYNC_INTERVAL_MS = 15000;
+const RUN_VIDEO_COUNT = 15;
 
-const ANSWER_KEY = {
-  Video1: "cascade",
-  Video2: "track",
-  Video3: "track",
-  Video4: "cascade",
-  Video5: "track",
-  Video6: "cascade",
-  Video7: "track",
-  Video8: "track",
-  Video9: "track",
-  Video10: "track",
-  Video11: "track",
-  Video12: "track",
-  Video13: "track",
-  Video14: "cascade",
-  Video15: "cascade",
-};
-
-const SEEDED_PUBLIC_LINE_COUNTS = {
-  // Historical test picks supplied by the user to open the public lines with a real baseline.
-  Video1: { trackCount: 9, cascadeCount: 5 },
-  Video2: { trackCount: 3, cascadeCount: 11 },
-  Video3: { trackCount: 7, cascadeCount: 7 },
-  Video4: { trackCount: 7, cascadeCount: 7 },
-  Video5: { trackCount: 7, cascadeCount: 7 },
-  Video6: { trackCount: 8, cascadeCount: 6 },
-  Video7: { trackCount: 7, cascadeCount: 7 },
-  Video8: { trackCount: 7, cascadeCount: 7 },
-  Video9: { trackCount: 6, cascadeCount: 8 },
-  Video10: { trackCount: 2, cascadeCount: 12 },
-  Video11: { trackCount: 10, cascadeCount: 4 },
-  Video12: { trackCount: 6, cascadeCount: 8 },
-  Video13: { trackCount: 11, cascadeCount: 3 },
-  Video14: { trackCount: 10, cascadeCount: 4 },
-  Video15: { trackCount: 11, cascadeCount: 3 },
-};
-
-const SECTIONS = [
+const MANIFEST_SOURCES = [
   {
-    id: "tutorial",
-    label: "Group 1",
-    title: "Control Round",
-    startIndex: 0,
-    endIndex: 2,
-    coinMode: false,
-    publicLines: false,
-    description:
-      "Three control clips appear first in a shuffled run order. Players choose Track or Cascade and get immediate correctness feedback, but the coin bank stays closed.",
+    folderName: "Group 1",
+    manifestFile: "Group1Manifest.csv",
+    sectionId: "market",
   },
   {
-    id: "coins",
-    label: "Group 2",
-    title: "Coin Round",
-    startIndex: 3,
-    endIndex: 8,
-    coinMode: true,
-    publicLines: false,
-    description:
-      "Six shuffled clips with the coin bank live. The player starts this round with 10 coins, every correct answer adds 1 coin, every wrong answer removes 1, after 2 straight correct coin picks the hot-hand bonus pays 2 coins on each next consecutive correct pick, and players can check Double or Nothing to risk bigger swings on a single clip.",
+    folderName: "Group 2",
+    manifestFile: "Group2Manifest.csv",
+    sectionId: "market",
   },
+  {
+    folderName: "Group 3",
+    manifestFile: "Group3Manifest.csv",
+    sectionId: "market",
+  },
+  {
+    folderName: "Group 4",
+    manifestFile: "Group4Manifest.csv",
+    sectionId: "market",
+  },
+];
+
+const SECTION_TEMPLATES = [
   {
     id: "market",
     label: "Group 3",
     title: "Public Lines",
-    startIndex: 9,
-    endIndex: 14,
     coinMode: true,
     publicLines: true,
-    description:
-      "The final six shuffled clips keep the coin rules, continue the hot-hand bonus, allow the same Double or Nothing wager, and also show the public Track vs Cascade split, seeded with historical test picks and updated by live completed runs.",
+    description: (clipCount) =>
+      `Each run samples ${clipCount} random clips from the full catalog. Every clip uses the public-lines format with live Track vs Cascade percentages, coin scoring, the hot-hand bonus, and the optional Double or Nothing wager.`,
   },
 ];
 
-const VIDEOS = Array.from({ length: 15 }, (_, index) => {
-  const videoNumber = index + 1;
+const SEEDED_PUBLIC_LINE_COUNTS = {};
 
-  return {
-    id: `Video${videoNumber}`,
-    label: `Video ${videoNumber}`,
-    src: `videos/Video${videoNumber}.mp4`,
-    questionNumber: videoNumber,
-  };
-});
-
-const VIDEOS_BY_ID = Object.fromEntries(
-  VIDEOS.map((video) => [video.id, video]),
-);
+let ALL_VIDEOS = [];
+let ALL_VIDEOS_BY_ID = {};
+let SECTIONS = [];
+let VIDEOS = [];
+let VIDEOS_BY_ID = {};
 
 const state = {
   players: [],
@@ -103,6 +59,14 @@ const state = {
   lastCompletedRun: null,
   showHelp: false,
   showAnalysis: false,
+  catalogLoaded: false,
+  catalogError: null,
+  scheduleLoaded: false,
+  scheduleError: null,
+  activeCycleStart: null,
+  activeCycleEnd: null,
+  activeVideoIds: [],
+  catalogSize: 0,
 };
 
 const appRoot = document.querySelector("#app");
@@ -111,6 +75,7 @@ const analysisRoot = document.querySelector("#analysis-modal-root");
 let playerSyncTimerId = null;
 
 render();
+void initializeVideoCatalog();
 initializeSharedPlayers();
 
 document.addEventListener("click", (event) => {
@@ -206,7 +171,242 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+async function initializeVideoCatalog() {
+  try {
+    const catalog = await loadVideoCatalog();
+
+    ALL_VIDEOS = catalog.videos;
+    ALL_VIDEOS_BY_ID = Object.fromEntries(
+      ALL_VIDEOS.map((video) => [video.id, video]),
+    );
+    state.catalogLoaded = true;
+    state.catalogError = null;
+    applyWeeklyVideoSelection();
+  } catch (error) {
+    console.error(error);
+    state.catalogLoaded = true;
+    state.catalogError = error instanceof Error
+      ? error.message
+      : "Couldn't load the video manifests.";
+  }
+
+  render();
+}
+
+async function loadVideoCatalog() {
+  const sourceResults = await Promise.all(
+    MANIFEST_SOURCES.map((source) => loadManifestSource(source)),
+  );
+  const videos = sourceResults.flatMap((result) => result.videos);
+
+  if (!videos.length) {
+    throw new Error("No manifest videos were found.");
+  }
+
+  return {
+    videos,
+  };
+}
+
+async function loadManifestSource(source) {
+  const manifestUrl = buildAssetUrl("videos", source.folderName, source.manifestFile);
+  const response = await fetch(manifestUrl);
+
+  if (!response.ok) {
+    throw new Error(`Failed to load manifest ${source.manifestFile}: ${response.status}`);
+  }
+
+  const manifestText = await response.text();
+  const rows = parseCsv(manifestText);
+  const videos = rows.map((row, index) => buildVideoFromManifestRow(row, source, index));
+
+  return {
+    ...source,
+    videos: videos.filter(Boolean),
+  };
+}
+
+function buildVideoFromManifestRow(row, source, index) {
+  const fileName = `${row.video || row.Video || ""}`.trim();
+
+  if (!fileName) {
+    return null;
+  }
+
+  const interactionType = `${row["#InteractionType"] || row.InteractionType || ""}`.trim();
+  const correctChoice = getChoiceFromInteractionType(interactionType);
+
+  if (!correctChoice) {
+    throw new Error(
+      `Unsupported interaction type "${interactionType}" in ${source.manifestFile} for ${fileName}.`,
+    );
+  }
+
+  const eventId = `${row["#EventID"] || row.EventID || extractEventId(fileName) || ""}`.trim();
+
+  return {
+    id: `${source.folderName}/${fileName}`,
+    label: eventId ? `Event ${eventId}` : `${source.folderName} Clip ${index + 1}`,
+    src: buildAssetUrl("videos", source.folderName, fileName),
+    sourceGroup: source.folderName,
+    sectionId: source.sectionId,
+    manifestIndex: index + 1,
+    interactionType,
+    correctChoice,
+  };
+}
+
+function buildSections(videos) {
+  return SECTION_TEMPLATES.reduce((sections, template) => {
+    const sectionVideos = videos.filter((video) => video.sectionId === template.id);
+    const playableVideoCount = Math.min(RUN_VIDEO_COUNT, sectionVideos.length);
+
+    if (!playableVideoCount) {
+      return sections;
+    }
+
+    const section = {
+      id: template.id,
+      label: template.label,
+      title: template.title,
+      coinMode: template.coinMode,
+      publicLines: template.publicLines,
+      description: template.description(playableVideoCount),
+      startIndex: 0,
+      endIndex: playableVideoCount - 1,
+      videoIds: sectionVideos.map((video) => video.id),
+    };
+
+    sections.push(section);
+    return sections;
+  }, []);
+}
+
+function applyWeeklyVideoSelection() {
+  if (!state.catalogLoaded || !state.scheduleLoaded) {
+    return;
+  }
+
+  const activeVideoIds = Array.isArray(state.activeVideoIds) ? state.activeVideoIds : [];
+  const weeklyVideos = activeVideoIds
+    .map((videoId) => ALL_VIDEOS_BY_ID[videoId])
+    .filter(Boolean);
+
+  if (!weeklyVideos.length) {
+    state.scheduleError = "The server did not provide a playable Friday lineup.";
+    VIDEOS = [];
+    VIDEOS_BY_ID = {};
+    SECTIONS = [];
+    return;
+  }
+
+  VIDEOS = weeklyVideos;
+  VIDEOS_BY_ID = Object.fromEntries(
+    VIDEOS.map((video) => [video.id, video]),
+  );
+  SECTIONS = buildSections(VIDEOS);
+  state.catalogSize = ALL_VIDEOS.length;
+  state.scheduleError = null;
+}
+
+function parseCsv(csvText) {
+  const lines = csvText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) {
+    return [];
+  }
+
+  const headers = parseCsvLine(lines[0]);
+
+  return lines.slice(1).map((line) => {
+    const values = parseCsvLine(line);
+
+    return headers.reduce((row, header, index) => {
+      row[header] = values[index] ?? "";
+      return row;
+    }, {});
+  });
+}
+
+function parseCsvLine(line) {
+  const values = [];
+  let currentValue = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    const nextCharacter = line[index + 1];
+
+    if (character === "\"") {
+      if (inQuotes && nextCharacter === "\"") {
+        currentValue += "\"";
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+
+      continue;
+    }
+
+    if (character === "," && !inQuotes) {
+      values.push(currentValue);
+      currentValue = "";
+      continue;
+    }
+
+    currentValue += character;
+  }
+
+  values.push(currentValue);
+  return values;
+}
+
+function getChoiceFromInteractionType(interactionType) {
+  if (interactionType === "1") {
+    return "track";
+  }
+
+  if (interactionType === "2") {
+    return "cascade";
+  }
+
+  return null;
+}
+
+function extractEventId(fileName) {
+  const match = fileName.match(/event(\d+)/i);
+  return match ? match[1] : null;
+}
+
+function buildAssetUrl(...segments) {
+  return segments.map((segment) => encodeURIComponent(segment)).join("/");
+}
+
 function render() {
+  if (!state.catalogLoaded || !state.scheduleLoaded) {
+    appRoot.innerHTML = renderCatalogStateView({
+      title: "Loading Friday lineup",
+      description:
+        "Preparing the shared Friday 15-video lineup and weekly leaderboard reset state.",
+    });
+    helpRoot.innerHTML = "";
+    analysisRoot.innerHTML = "";
+    return;
+  }
+
+  if (state.catalogError || state.scheduleError) {
+    appRoot.innerHTML = renderCatalogStateView({
+      title: "Video catalog unavailable",
+      description: state.catalogError || state.scheduleError,
+    });
+    helpRoot.innerHTML = "";
+    analysisRoot.innerHTML = "";
+    return;
+  }
+
   ensureCurrentRunVideoOrder();
   ensureQuestionStartedAt();
   updateAnalysisButton();
@@ -218,6 +418,18 @@ function render() {
   initializeAutoplayVideos();
 }
 
+function renderCatalogStateView({ title, description }) {
+  return `
+    <section class="panel appear">
+      <div class="panel-inner">
+        <p class="eyebrow">Neutrino Catalog</p>
+        <h2 class="hero-title">${escapeHtml(title)}</h2>
+        <p class="hero-copy">${escapeHtml(description)}</p>
+      </div>
+    </section>
+  `;
+}
+
 function renderLandingView() {
   if (state.lastCompletedRun) {
     return renderResultsView(state.lastCompletedRun);
@@ -225,31 +437,39 @@ function renderLandingView() {
 
   const leaderboard = buildLeaderboard(state.players);
   const hasLeaderboard = leaderboard.length > 0;
+  const marketSection = getSectionById("market");
+  const marketClipCount = marketSection ? getSectionQuestionCount(marketSection) : 0;
+  const cycleStartLabel = formatCycleDate(state.activeCycleStart);
+  const cycleEndLabel = formatCycleDate(state.activeCycleEnd);
 
   return `
     <section class="welcome-layout appear">
       <article class="panel hero-card">
         <div class="panel-inner">
-          <p class="eyebrow">15 videos. 3 escalating rounds.</p>
+          <p class="eyebrow">${state.catalogSize || ALL_VIDEOS.length} videos in the catalog. Shared Friday set of ${marketClipCount}.</p>
           <h2 class="hero-title">Classify the event. Read the line. Build the board.</h2>
           <p class="hero-copy">
-            Players enter a name, get a fresh shuffled order of all 15 neutrino clips, and finish
-            on a shared leaderboard. The first 3 clips are control only, the next 6 open the coin
-            wallet, and the final 6 layer in public percentage lines seeded from past test picks.
+            Players enter a name, play the shared Friday lineup of ${marketClipCount} clips, and
+            finish on a weekly leaderboard. Every question runs in the Group 3 public-lines format
+            with live percentages, coin scoring, hot-hand bonuses, and optional Double or Nothing.
+          </p>
+
+          <p class="subtle-copy">
+            Current Friday slate: ${cycleStartLabel}${cycleEndLabel ? ` through ${cycleEndLabel}` : ""}. A new 15-video set and a fresh leaderboard go live every Friday.
           </p>
 
           <div class="feature-strip">
             <div class="feature-chip">
-              <strong>Group 1</strong>
-              <span>3 control clips with simple Track or Cascade choices and no coin movement.</span>
+              <strong>Run Format</strong>
+              <span>Everyone sees the same ${marketClipCount} videos for the current Friday slate.</span>
             </div>
             <div class="feature-chip">
-              <strong>Group 2</strong>
-              <span>6 shuffled coin clips. Start with 10 coins, gain 1 for right picks, lose 1 for wrong ones, hit a hot-hand bonus after 2 straight coin wins, and optionally wager Double or Nothing.</span>
+              <strong>Group 3 Rules</strong>
+              <span>Every clip shows live public Track and Cascade lines and starts with the coin bank already active.</span>
             </div>
             <div class="feature-chip">
-              <strong>Group 3</strong>
-              <span>6 shuffled market clips with coin scoring, the same streak bonus, an optional Double or Nothing wager, and seeded Track and Cascade public lines.</span>
+              <strong>Weekly Reset</strong>
+              <span>Each Friday the lineup refreshes and the leaderboard resets for the new week.</span>
             </div>
           </div>
 
@@ -268,7 +488,7 @@ function renderLandingView() {
                 required
               />
               <div class="button-row">
-                <button type="submit" class="primary-button">Start randomized 15-video run</button>
+                <button type="submit" class="primary-button">Start Friday lineup of ${marketClipCount} videos</button>
                 <button type="button" class="secondary-button" data-action="open-help">
                   Learn Track vs Cascade
                 </button>
@@ -276,8 +496,10 @@ function renderLandingView() {
             </form>
 
             <p class="subtle-copy">
-              The full 15-video answer key is live, so scores, coins, leaderboard standings, and
-              analysis accuracy now use the real Track/Cascade labels.
+              Every clip now pulls its Track/Cascade answer from the manifest
+              <code>#InteractionType</code>
+              field, so scores, coins, leaderboard standings, and analysis accuracy stay aligned
+              with the new folder layout.
             </p>
           </div>
         </div>
@@ -333,7 +555,7 @@ function renderQuestionView(run) {
   const video = getVideoForRunIndex(run, run.currentIndex);
   const currentCoins = getVisibleCoins(run, section);
   const questionInSection = run.currentIndex - section.startIndex + 1;
-  const sectionQuestionCount = getSectionQuestionCount(section);
+  const sectionQuestionCount = getRunVideoCount(run);
   const overallQuestionNumber = run.currentIndex + 1;
   const lines = section.publicLines ? getPublicLines(video.id, state.players) : null;
 
@@ -344,7 +566,7 @@ function renderQuestionView(run) {
           <div class="game-heading-block">
             <p class="eyebrow">${section.label}</p>
             <h2 class="hero-title">${section.title}</h2>
-            <p class="game-copy">Clip ${overallQuestionNumber} of ${VIDEOS.length} • Question ${questionInSection} of ${sectionQuestionCount} in this group</p>
+            <p class="game-copy">Clip ${overallQuestionNumber} of ${getRunVideoCount(run)} • Question ${questionInSection} of ${sectionQuestionCount} in this run</p>
           </div>
 
           <div class="status-strip status-strip-compact">
@@ -354,14 +576,14 @@ function renderQuestionView(run) {
             </div>
             <div class="stat-card">
               <span>Question</span>
-              <strong>${overallQuestionNumber} / ${VIDEOS.length}</strong>
+              <strong>${overallQuestionNumber} / ${getRunVideoCount(run)}</strong>
             </div>
             <div class="wallet-card">
               <span>Coin Bank</span>
               <strong>
                 ${
                   currentCoins === null
-                    ? "Opens in Group 2"
+                    ? "Starts at 10"
                     : `<span class="wallet-display"><img class="coin-icon" src="${COIN_ICON_SRC}" alt="" aria-hidden="true" />${currentCoins}</span>`
                 }
               </strong>
@@ -373,7 +595,7 @@ function renderQuestionView(run) {
           <div class="video-column">
             <div class="section-pill section-pill-compact">
               <strong>${video.label}</strong>
-              <span>${section.publicLines ? "Coins and public line live" : section.coinMode ? "Coin scoring live" : "Control round"}</span>
+              <span>${video.sourceGroup} • Coins and public lines live</span>
             </div>
 
             <div class="video-shell game-video-shell">
@@ -384,7 +606,7 @@ function renderQuestionView(run) {
           <div class="decision-column">
             <div class="decision-card ${section.publicLines ? "decision-card-market" : ""}">
               <div class="round-note">
-                <strong>${questionInSection === 1 ? "Round briefing" : "Round rules"}</strong>
+                <strong>${questionInSection === 1 ? "Run briefing" : "Run rules"}</strong>
                 <p class="subtle-copy decision-copy">${section.description}</p>
               </div>
 
@@ -431,13 +653,13 @@ function renderQuestionView(run) {
             <div class="decision-meta-grid">
               <div class="mini-card compact-card">
                 <span>Scoring mode</span>
-                <strong>${section.coinMode ? "Coin round live" : "Control only"}</strong>
-                <p>${section.coinMode ? "Correct picks add 1 coin and wrong picks lose 1 coin. After 2 straight correct coin picks, each next consecutive correct pick earns 2 coins until the streak breaks. Double or Nothing changes one clip to -2 on a miss, +2 on a normal hit, or +3 on a streak hit." : "This opening control section checks classification without changing the coin bank."}</p>
+                <strong>Group 3 live</strong>
+                <p>Correct picks add 1 coin and wrong picks lose 1 coin. After 2 straight correct picks, each next consecutive correct pick earns 2 coins until the streak breaks. Double or Nothing changes one clip to -2 on a miss, +2 on a normal hit, or +3 on a streak hit.</p>
               </div>
               <div class="mini-card compact-card">
-                <span>${section.publicLines ? "Public line" : "Answer key"}</span>
-                <strong>${section.publicLines ? "Built into each pick" : "Live scoring"}</strong>
-                <p>${section.publicLines ? "Track and Cascade percentages are part of the answer cards and open with the seeded historical baseline for that clip." : "Each pick is checked against the saved answer key for the current clip."}</p>
+                <span>Public line</span>
+                <strong>Built into each pick</strong>
+                <p>Track and Cascade percentages are part of the answer cards and reflect the latest completed runs for that clip.</p>
               </div>
             </div>
           </div>
@@ -449,10 +671,10 @@ function renderQuestionView(run) {
 
 function renderFeedbackView(run) {
   const answer = run.answers[run.answers.length - 1];
-  const isFinalQuestion = run.currentIndex === VIDEOS.length - 1;
+  const isFinalQuestion = run.currentIndex === getRunVideoCount(run) - 1;
   const coinDelta = typeof answer.coinsAfter === "number" ? answer.coinsAfter - answer.coinsBefore : null;
   const nextLabel = isFinalQuestion ? "Finish and show leaderboard" : "Next video";
-  const expectedChoice = ANSWER_KEY[answer.videoId] || answer.choice;
+  const expectedChoice = getExpectedChoice(answer.videoId) || answer.choice;
   const answerSection = getSectionById(answer.sectionId);
   const sectionQuestionCount = answerSection
     ? getSectionQuestionCount(answerSection)
@@ -467,7 +689,7 @@ function renderFeedbackView(run) {
     : "";
   const coinMovementCopy =
     coinDelta === null
-      ? "Control-round answers do not touch the wallet."
+      ? "Wallet did not change on this pick."
       : answer.streakBonusApplied
         ? `Wallet moved from ${answer.coinsBefore} to ${answer.coinsAfter}. Hot-hand bonus activated on ${formatOrdinal(answer.streakAfter)} straight correct coin pick.${wagerCopy ? ` ${wagerCopy}` : ""}`
         : `Wallet moved from ${answer.coinsBefore} to ${answer.coinsAfter}.${wagerCopy ? ` ${wagerCopy}` : ""}`;
@@ -492,12 +714,12 @@ function renderFeedbackView(run) {
           </div>
           <div class="feedback-card">
             <span>Question progress</span>
-            <strong>${answer.questionNumber} / ${VIDEOS.length}</strong>
+            <strong>${answer.questionNumber} / ${getRunVideoCount(run)}</strong>
             <p>${answer.sectionLabel}, question ${answer.sectionQuestionNumber} of ${sectionQuestionCount}.</p>
           </div>
           <div class="feedback-card">
             <span>Coin movement</span>
-            <strong>${coinDelta === null ? "No wallet yet" : `${coinDelta > 0 ? "+" : ""}${coinDelta} coin${Math.abs(coinDelta) === 1 ? "" : "s"}`}</strong>
+            <strong>${coinDelta === null ? "No change" : `${coinDelta > 0 ? "+" : ""}${coinDelta} coin${Math.abs(coinDelta) === 1 ? "" : "s"}`}</strong>
             <p>${coinMovementCopy}</p>
           </div>
         </div>
@@ -525,6 +747,11 @@ function renderFeedbackView(run) {
 function renderResultsView(run) {
   const leaderboard = buildLeaderboard(state.players);
   const stats = calculateRunStats(run.answers);
+  const marketStats = stats.sectionStats.market || {
+    correct: 0,
+    total: 0,
+    accuracy: 0,
+  };
 
   return `
     <section class="results-layout appear">
@@ -533,7 +760,7 @@ function renderResultsView(run) {
           <div class="score-shell">
             <div>
               <p class="eyebrow">Run Complete</p>
-              <h2 class="score-title">${escapeHtml(run.name)} finished all 15 videos</h2>
+              <h2 class="score-title">${escapeHtml(run.name)} finished all ${getRunVideoCount(run)} sampled videos</h2>
               <p class="hero-copy">
                 The score below has been written into the shared leaderboard, and the full answer
                 breakdown is available in the analysis export modal.
@@ -553,19 +780,14 @@ function renderResultsView(run) {
               <p>${stats.totalCorrect} of ${stats.totalQuestions} correct.</p>
             </div>
             <div class="summary-card">
-              <span>Control</span>
-              <strong>${formatPercent(stats.sectionStats.tutorial.accuracy)}</strong>
-              <p>${stats.sectionStats.tutorial.correct} of ${stats.sectionStats.tutorial.total} correct.</p>
-            </div>
-            <div class="summary-card">
-              <span>Coin round</span>
-              <strong>${formatPercent(stats.sectionStats.coins.accuracy)}</strong>
-              <p>${stats.sectionStats.coins.correct} of ${stats.sectionStats.coins.total} correct.</p>
-            </div>
-            <div class="summary-card">
               <span>Public lines</span>
-              <strong>${formatPercent(stats.sectionStats.market.accuracy)}</strong>
-              <p>${stats.sectionStats.market.correct} of ${stats.sectionStats.market.total} correct.</p>
+              <strong>${formatPercent(marketStats.accuracy)}</strong>
+              <p>${marketStats.correct} of ${marketStats.total} correct in Group 3 mode.</p>
+            </div>
+            <div class="summary-card">
+              <span>Sample size</span>
+              <strong>${getRunVideoCount(run)}</strong>
+              <p>Random clips drawn from the ${VIDEOS.length}-video catalog.</p>
             </div>
           </div>
 
@@ -659,7 +881,7 @@ function renderAnalysisModal() {
               <h2 class="modal-title">Analysis &amp; Export</h2>
               <p class="hero-copy">
                 This pulls from the shared server leaderboard and creates
-                Excel-ready CSV tables for per-user, per-group, and per-video analysis.
+                Excel-ready CSV tables for per-user, per-run, and per-video analysis.
               </p>
             </div>
 
@@ -683,21 +905,19 @@ function renderAnalysisModal() {
                   <div class="summary-card">
                     <span>Average accuracy</span>
                     <strong>${formatPercent(averageAccuracy)}</strong>
-                    <p>Overall correctness rate across the full 15-video flow.</p>
+                    <p>Overall correctness rate across the ${getRunVideoCount()}-video Group 3 format.</p>
                   </div>
                 </div>
 
                 ${renderAnalysisTable({
                   title: "Per-user summary",
-                  note: "Use this table for total user performance, final coin score, section accuracy, and average decision timing.",
+                  note: "Use this table for total user performance, final coin score, public-lines accuracy, and average decision timing.",
                   report: "user-summary",
-                  headers: ["Player", "Coins", "Total Accuracy", "Control Accuracy", "Coin Round Accuracy", "Public Lines Accuracy", "Avg Response Time", "Avg Clip Time At Pick", "After Half Rate", "Completed"],
+                  headers: ["Player", "Coins", "Total Accuracy", "Public Lines Accuracy", "Avg Response Time", "Avg Clip Time At Pick", "After Half Rate", "Completed"],
                   rows: summaryRows.map((row) => [
                     escapeHtml(row.name),
                     row.finalCoins,
                     formatPercent(row.totalAccuracy),
-                    formatPercent(row.controlAccuracy),
-                    formatPercent(row.coinAccuracy),
                     formatPercent(row.marketAccuracy),
                     formatSeconds(row.averageResponseSeconds),
                     formatSeconds(row.averageClipTimeAtChoiceSeconds),
@@ -708,7 +928,7 @@ function renderAnalysisModal() {
 
                 ${renderAnalysisTable({
                   title: "Per-user group breakdown",
-                  note: "One row per user per section so you can graph the 3-control, 6-coin, and 6-public-line groups separately.",
+                  note: "One row per user for the single Group 3 public-lines format.",
                   report: "group-breakdown",
                   headers: ["Player", "Group", "Correct", "Total", "Accuracy", "Completed"],
                   rows: groupRows.map((row) => [
@@ -723,7 +943,7 @@ function renderAnalysisModal() {
 
                 ${renderAnalysisTable({
                   title: "Per-video public response lines",
-                  note: "Tracks seeded test picks plus completed live picks, then shows Track percentage, Cascade percentage, and overall pick accuracy for every video.",
+                  note: "Tracks completed live picks, then shows Track percentage, Cascade percentage, and overall pick accuracy for every video.",
                   report: "video-lines",
                   headers: ["Video", "Track Picks", "Cascade Picks", "Track %", "Cascade %", "Attempts", "Accuracy"],
                   rows: videoRows.map((row) => [
@@ -760,7 +980,7 @@ function renderAnalysisModal() {
               : `
                 <div class="empty-state">
                   <p class="empty-state-copy">
-                    There are no completed runs yet. Once a player finishes all 15 videos, the CSV
+                    There are no completed runs yet. Once a player finishes all ${getRunVideoCount()} sampled videos, the CSV
                     tables will appear here automatically.
                   </p>
                 </div>
@@ -1082,12 +1302,35 @@ async function syncPlayersFromServer() {
 
     const payload = await response.json();
     state.players = Array.isArray(payload.players) ? payload.players : [];
+    state.activeCycleStart = typeof payload.activeCycleStart === "string"
+      ? payload.activeCycleStart
+      : null;
+    state.activeCycleEnd = typeof payload.activeCycleEnd === "string"
+      ? payload.activeCycleEnd
+      : null;
+    state.activeVideoIds = Array.isArray(payload.activeVideoIds)
+      ? payload.activeVideoIds.filter((videoId) => typeof videoId === "string")
+      : [];
+    state.catalogSize = typeof payload.catalogSize === "number"
+      ? payload.catalogSize
+      : state.catalogSize;
+    state.scheduleLoaded = true;
+    state.scheduleError = null;
+    applyWeeklyVideoSelection();
+    const runBecameInvalid = Boolean(
+      state.currentRun && !isCurrentRunCompatible(state.currentRun),
+    );
 
-    if (!state.currentRun || state.showAnalysis || state.lastCompletedRun) {
+    if (!state.currentRun || state.showAnalysis || state.lastCompletedRun || runBecameInvalid) {
       render();
     }
   } catch (error) {
     console.error(error);
+    state.scheduleLoaded = true;
+    state.scheduleError = error instanceof Error
+      ? error.message
+      : "Couldn't load the shared Friday lineup.";
+    render();
   }
 }
 
@@ -1101,7 +1344,19 @@ async function uploadPlayerRecord(playerRecord) {
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to upload player record: ${response.status}`);
+    let message = `Failed to upload player record: ${response.status}`;
+
+    try {
+      const payload = await response.json();
+
+      if (typeof payload.error === "string" && payload.error) {
+        message = payload.error;
+      }
+    } catch (error) {
+      console.error(error);
+    }
+
+    throw new Error(message);
   }
 
   const payload = await response.json();
@@ -1120,7 +1375,8 @@ function beginRun(rawName) {
     id: `run-${Date.now()}`,
     name,
     nameKey: normalizeName(name),
-    videoOrder: shuffleArray(VIDEOS.map((video) => video.id)),
+    cycleStart: state.activeCycleStart,
+    videoOrder: buildRunVideoOrder(),
     currentIndex: 0,
     phase: "question",
     answers: [],
@@ -1212,7 +1468,7 @@ async function advanceRun() {
     return;
   }
 
-  if (run.currentIndex >= VIDEOS.length - 1) {
+  if (run.currentIndex >= getRunVideoCount(run) - 1) {
     finalizeRun();
     return;
   }
@@ -1238,6 +1494,7 @@ async function finalizeRun() {
     id: run.id,
     name: run.name,
     nameKey: run.nameKey,
+    cycleStart: run.cycleStart || state.activeCycleStart,
     startedAt: run.startedAt,
     completedAt,
     finalCoins: typeof run.coins === "number" ? run.coins : 10,
@@ -1256,6 +1513,16 @@ async function finalizeRun() {
     render();
   } catch (error) {
     console.error(error);
+    const message = error instanceof Error ? error.message : "";
+
+    if (message.includes("Weekly lineup changed")) {
+      state.currentRun = null;
+      localStorage.removeItem(STORAGE_KEYS.currentRun);
+      void syncPlayersFromServer();
+      window.alert("The Friday lineup changed while this run was in progress. Start a fresh run from the new weekly slate.");
+      return;
+    }
+
     window.alert(
       "Couldn't upload this run to the shared server yet. The entry is still open on this device, so please try again in a moment.",
     );
@@ -1308,8 +1575,6 @@ function buildUserSummaryRows(players) {
     name: player.name,
     finalCoins: player.finalCoins,
     totalAccuracy: player.totalAccuracy,
-    controlAccuracy: getPlayerSectionStat(player, "tutorial").accuracy,
-    coinAccuracy: getPlayerSectionStat(player, "coins").accuracy,
     marketAccuracy: getPlayerSectionStat(player, "market").accuracy,
     averageResponseSeconds: averageOfValues(
       player.answers.map((answer) => answer.responseSeconds),
@@ -1402,6 +1667,10 @@ function getVisibleCoins(run, section) {
 }
 
 function getSectionQuestionCount(section) {
+  if (section.id === "market") {
+    return getConfiguredRunVideoCount();
+  }
+
   return section.endIndex - section.startIndex + 1;
 }
 
@@ -1410,15 +1679,12 @@ function ensureCurrentRunVideoOrder() {
     return;
   }
 
-  if (
-    Array.isArray(state.currentRun.videoOrder) &&
-    state.currentRun.videoOrder.length === VIDEOS.length
-  ) {
+  if (isCurrentRunCompatible(state.currentRun)) {
     return;
   }
 
-  state.currentRun.videoOrder = VIDEOS.map((video) => video.id);
-  saveStorage(STORAGE_KEYS.currentRun, state.currentRun);
+  state.currentRun = null;
+  localStorage.removeItem(STORAGE_KEYS.currentRun);
 }
 
 function getVideoForRunIndex(run, index) {
@@ -1426,17 +1692,34 @@ function getVideoForRunIndex(run, index) {
   return VIDEOS_BY_ID[videoId] || VIDEOS[index];
 }
 
-function shuffleArray(items) {
-  const nextItems = [...items];
+function getRunVideoCount(run = state.currentRun) {
+  const configuredCount = getConfiguredRunVideoCount();
 
-  for (let index = nextItems.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(Math.random() * (index + 1));
-    const currentItem = nextItems[index];
-    nextItems[index] = nextItems[swapIndex];
-    nextItems[swapIndex] = currentItem;
+  if (Array.isArray(run?.videoOrder) && run.videoOrder.length) {
+    return Math.min(run.videoOrder.length, configuredCount);
   }
 
-  return nextItems;
+  return configuredCount;
+}
+
+function getConfiguredRunVideoCount() {
+  return Math.min(RUN_VIDEO_COUNT, VIDEOS.length);
+}
+
+function buildRunVideoOrder() {
+  return VIDEOS.map((video) => video.id);
+}
+
+function isCurrentRunCompatible(run) {
+  if (!run || run.cycleStart !== state.activeCycleStart) {
+    return false;
+  }
+
+  if (!Array.isArray(run.videoOrder) || run.videoOrder.length !== VIDEOS.length) {
+    return false;
+  }
+
+  return run.videoOrder.every((videoId, index) => videoId === VIDEOS[index]?.id);
 }
 
 function ensureQuestionStartedAt() {
@@ -1499,7 +1782,7 @@ function getCurrentQuestionTiming(questionStartedAt) {
 }
 
 function isAnswerCorrect(videoId, choice) {
-  const expected = ANSWER_KEY[videoId];
+  const expected = getExpectedChoice(videoId);
 
   if (!expected) {
     return true;
@@ -1569,15 +1852,19 @@ function getCombinedVideoLineStats(videoId, players) {
 }
 
 function getSeededCorrectCount(videoId, seededCounts) {
-  if (ANSWER_KEY[videoId] === "track") {
+  if (getExpectedChoice(videoId) === "track") {
     return seededCounts.trackCount;
   }
 
-  if (ANSWER_KEY[videoId] === "cascade") {
+  if (getExpectedChoice(videoId) === "cascade") {
     return seededCounts.cascadeCount;
   }
 
   return 0;
+}
+
+function getExpectedChoice(videoId) {
+  return VIDEOS_BY_ID[videoId]?.correctChoice || null;
 }
 
 function upsertPlayerRecord(players, playerRecord) {
@@ -1615,8 +1902,6 @@ function downloadCsv(report) {
         player: row.name,
         coins: row.finalCoins,
         total_accuracy: decimalPercent(row.totalAccuracy),
-        control_accuracy: decimalPercent(row.controlAccuracy),
-        coin_round_accuracy: decimalPercent(row.coinAccuracy),
         public_lines_accuracy: decimalPercent(row.marketAccuracy),
         average_response_seconds: row.averageResponseSeconds,
         average_clip_time_at_pick_seconds: row.averageClipTimeAtChoiceSeconds,
@@ -1765,6 +2050,16 @@ function formatDate(isoValue) {
   return new Date(isoValue).toLocaleString([], {
     dateStyle: "medium",
     timeStyle: "short",
+  });
+}
+
+function formatCycleDate(isoDate) {
+  if (!isoDate) {
+    return "";
+  }
+
+  return new Date(`${isoDate}T12:00:00`).toLocaleDateString([], {
+    dateStyle: "medium",
   });
 }
 

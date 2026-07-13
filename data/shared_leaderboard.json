@@ -1,0 +1,23 @@
+{
+  "players": [],
+  "updatedAt": "2026-07-13T13:26:42.981183+00:00",
+  "activeCycleStart": "2026-07-10",
+  "activeCycleEnd": "2026-07-16",
+  "activeVideoIds": [
+    "Group 4/run120000_event11769_rot80deg_slowmo14.mp4",
+    "Group 3/run120000_event10192_rot80deg_slowmo14.mp4",
+    "Group 1/run120000_event15443_rot80deg_slowmo14.mp4",
+    "Group 4/run120000_event15323_rot80deg_slowmo14.mp4",
+    "Group 4/run120000_event9275_rot80deg_slowmo14.mp4",
+    "Group 4/run120000_event42015_rot80deg_slowmo14.mp4",
+    "Group 4/run120000_event16042_rot80deg_slowmo14.mp4",
+    "Group 2/run120000_event10302_rot80deg_slowmo14.mp4",
+    "Group 1/run120000_event9944_rot80deg_slowmo14.mp4",
+    "Group 4/run120000_event9139_rot80deg_slowmo14.mp4",
+    "Group 3/run120000_event20374_rot80deg_slowmo14.mp4",
+    "Group 3/run120000_event8365_rot80deg_slowmo14.mp4",
+    "Group 2/run120000_event9977_rot80deg_slowmo14.mp4",
+    "Group 1/run120000_event28476_rot80deg_slowmo14.mp4",
+    "Group 2/run120000_event15438_rot80deg_slowmo14.mp4"
+  ]
+}
