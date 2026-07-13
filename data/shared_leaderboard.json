@@ -1,39 +1,6 @@
 {
-  "players": [
-    {
-      "id": "smoke-run-backend-2026-07-13T23-18Z",
-      "mode": "friday",
-      "name": "Backend Smoke Test",
-      "nameKey": "backend-smoke-test",
-      "cycleStart": "2026-07-10",
-      "startedAt": "2026-07-13T23:19:08Z",
-      "completedAt": "2026-07-13T23:19:08Z",
-      "finalCoins": 7,
-      "totalCorrect": 7,
-      "totalQuestions": 15,
-      "totalAccuracy": 0.4666666667,
-      "sectionStats": {},
-      "answers": []
-    }
-  ],
-  "history": [
-    {
-      "id": "smoke-run-backend-2026-07-13T23-18Z",
-      "mode": "friday",
-      "name": "Backend Smoke Test",
-      "nameKey": "backend-smoke-test",
-      "cycleStart": "2026-07-10",
-      "startedAt": "2026-07-13T23:19:08Z",
-      "completedAt": "2026-07-13T23:19:08Z",
-      "finalCoins": 7,
-      "totalCorrect": 7,
-      "totalQuestions": 15,
-      "totalAccuracy": 0.4666666667,
-      "sectionStats": {},
-      "answers": []
-    }
-  ],
-  "updatedAt": "2026-07-13T23:19:08.914Z",
+  "players": [],
+  "updatedAt": "2026-07-13T13:26:42.981183+00:00",
   "activeCycleStart": "2026-07-10",
   "activeCycleEnd": "2026-07-16",
   "activeVideoIds": [
