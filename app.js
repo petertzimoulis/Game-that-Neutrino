@@ -1,13 +1,21 @@
 const STORAGE_KEYS = {
   currentRun: "game-that-neutrino-current-run",
   lastName: "game-that-neutrino-last-name",
+  selectedMode: "game-that-neutrino-selected-mode",
 };
 
 const API_PLAYERS_URL = "/api/players";
+const API_QUIZ_PLAYERS_URL = "/api/quiz-players";
+const API_ANALYTICS_URL = "/api/analytics";
+const API_ANALYTICS_EVENTS_URL = "/api/analytics-events";
 const COIN_ICON_SRC = "coin.png";
 const VIDEO_PLAYBACK_RATE = 2;
 const PLAYER_SYNC_INTERVAL_MS = 15000;
+const ANALYTICS_FLUSH_INTERVAL_MS = 4000;
 const RUN_VIDEO_COUNT = 15;
+const QUIZ_VIDEO_COUNT = 10;
+const QUIZ_TRACK_COUNT = 5;
+const QUIZ_CASCADE_COUNT = 5;
 
 const MANIFEST_SOURCES = [
   {
@@ -45,6 +53,20 @@ const SECTION_TEMPLATES = [
 ];
 
 const SEEDED_PUBLIC_LINE_COUNTS = {};
+const MODE_CONFIGS = {
+  friday: {
+    id: "friday",
+    title: "Friday Lineup",
+    leaderboardTitle: "Friday Leaderboard",
+    startButtonLabel: "Start Friday lineup",
+  },
+  quiz: {
+    id: "quiz",
+    title: "Learning Quiz",
+    leaderboardTitle: "Learning Quiz Leaderboard",
+    startButtonLabel: "Start learning quiz",
+  },
+};
 
 let ALL_VIDEOS = [];
 let ALL_VIDEOS_BY_ID = {};
@@ -54,8 +76,12 @@ let VIDEOS_BY_ID = {};
 
 const state = {
   players: [],
-  currentRun: loadStorage(STORAGE_KEYS.currentRun, null),
+  playerHistory: [],
+  quizPlayers: [],
+  quizHistory: [],
+  currentRun: normalizeStoredRun(loadStorage(STORAGE_KEYS.currentRun, null)),
   lastName: loadStorage(STORAGE_KEYS.lastName, ""),
+  selectedMode: loadStorage(STORAGE_KEYS.selectedMode, "friday"),
   lastCompletedRun: null,
   showHelp: false,
   showAnalysis: false,
@@ -63,20 +89,31 @@ const state = {
   catalogError: null,
   scheduleLoaded: false,
   scheduleError: null,
+  quizLeaderboardLoaded: false,
+  quizLeaderboardError: null,
   activeCycleStart: null,
   activeCycleEnd: null,
   activeVideoIds: [],
   catalogSize: 0,
+  analyticsLoaded: false,
+  analyticsError: null,
+  analyticsSummary: null,
+  recentAnalyticsEvents: [],
+  analyticsSessionId: createSessionId(),
 };
 
 const appRoot = document.querySelector("#app");
 const helpRoot = document.querySelector("#help-modal-root");
 const analysisRoot = document.querySelector("#analysis-modal-root");
 let playerSyncTimerId = null;
+let analyticsFlushTimerId = null;
+const analyticsQueue = [];
+const videoAnalyticsTimestamps = new Map();
 
 render();
 void initializeVideoCatalog();
 initializeSharedPlayers();
+initializeAnalyticsTracking();
 
 document.addEventListener("click", (event) => {
   if (event.target.classList.contains("modal-backdrop")) {
@@ -93,6 +130,16 @@ document.addEventListener("click", (event) => {
     return;
   }
 
+  const quizChoiceButton = event.target.closest("[data-quiz-choice]");
+
+  if (quizChoiceButton) {
+    setQuizChoice(
+      quizChoiceButton.dataset.videoId,
+      quizChoiceButton.dataset.quizChoice,
+    );
+    return;
+  }
+
   const actionButton = event.target.closest("[data-action]");
 
   if (!actionButton) {
@@ -103,9 +150,22 @@ document.addEventListener("click", (event) => {
 
   switch (action) {
     case "go-home":
+      trackEvent("go_home", {
+        mode: getActiveMode(),
+      });
       goHome();
       break;
+    case "select-mode":
+      trackEvent("mode_selected", {
+        previousMode: getActiveMode(),
+        nextMode: actionButton.dataset.mode,
+      });
+      selectMode(actionButton.dataset.mode);
+      break;
     case "open-help":
+      trackEvent("help_opened", {
+        mode: getActiveMode(),
+      });
       state.showHelp = true;
       state.showAnalysis = false;
       render();
@@ -117,11 +177,21 @@ document.addEventListener("click", (event) => {
     case "continue":
       advanceRun();
       break;
+    case "submit-quiz":
+      trackEvent("quiz_submit_clicked", {
+        mode: "quiz",
+        quizStatus: buildQuizStatus(state.currentRun || { videoOrder: [], quizChoices: {} }),
+      });
+      submitQuizRun();
+      break;
     case "open-analysis":
+      trackEvent("analysis_opened", {
+        mode: getActiveMode(),
+      });
       state.showHelp = false;
       state.showAnalysis = true;
       render();
-      void syncPlayersFromServer();
+      void syncAllDataFromServer();
       break;
     case "close-analysis":
       state.showAnalysis = false;
@@ -131,9 +201,12 @@ document.addEventListener("click", (event) => {
       downloadCsv(actionButton.dataset.report);
       break;
     case "play-again":
+      trackEvent("play_again_clicked", {
+        mode: getActiveMode(),
+      });
       state.lastCompletedRun = null;
       render();
-      void syncPlayersFromServer();
+      void syncAllDataFromServer();
       break;
     default:
       break;
@@ -160,7 +233,7 @@ document.addEventListener("submit", (event) => {
     return;
   }
 
-  beginRun(rawName);
+  beginRun(rawName, state.selectedMode);
 });
 
 document.addEventListener("keydown", (event) => {
@@ -386,21 +459,29 @@ function buildAssetUrl(...segments) {
 }
 
 function render() {
-  if (!state.catalogLoaded || !state.scheduleLoaded) {
+  const activeMode = getActiveMode();
+  const activeModeError = activeMode === "quiz" ? state.quizLeaderboardError : state.scheduleError;
+  const activeModeLoaded = activeMode === "quiz"
+    ? state.quizLeaderboardLoaded
+    : state.scheduleLoaded;
+
+  if (!state.catalogLoaded || !state.scheduleLoaded || !state.quizLeaderboardLoaded || !activeModeLoaded) {
     appRoot.innerHTML = renderCatalogStateView({
-      title: "Loading Friday lineup",
+      title: activeMode === "quiz" ? "Loading learning quiz" : "Loading Friday lineup",
       description:
-        "Preparing the shared Friday 15-video lineup and weekly leaderboard reset state.",
+        activeMode === "quiz"
+          ? "Preparing the full catalog and separate learning-quiz leaderboard."
+          : "Preparing the shared Friday 15-video lineup and weekly leaderboard reset state.",
     });
     helpRoot.innerHTML = "";
     analysisRoot.innerHTML = "";
     return;
   }
 
-  if (state.catalogError || state.scheduleError) {
+  if (state.catalogError || activeModeError) {
     appRoot.innerHTML = renderCatalogStateView({
       title: "Video catalog unavailable",
-      description: state.catalogError || state.scheduleError,
+      description: state.catalogError || activeModeError,
     });
     helpRoot.innerHTML = "";
     analysisRoot.innerHTML = "";
@@ -435,72 +516,454 @@ function renderLandingView() {
     return renderResultsView(state.lastCompletedRun);
   }
 
-  const leaderboard = buildLeaderboard(state.players);
+  const activeMode = getActiveMode();
+  const leaderboard = buildLeaderboard(getPlayersForMode(activeMode), activeMode);
   const hasLeaderboard = leaderboard.length > 0;
   const marketSection = getSectionById("market");
   const marketClipCount = marketSection ? getSectionQuestionCount(marketSection) : 0;
   const cycleStartLabel = formatCycleDate(state.activeCycleStart);
   const cycleEndLabel = formatCycleDate(state.activeCycleEnd);
 
+  const modeSpecificContent = activeMode === "quiz"
+    ? renderQuizLandingContent({ leaderboard, hasLeaderboard })
+    : renderFridayLandingContent({
+      leaderboard,
+      hasLeaderboard,
+      marketClipCount,
+      cycleStartLabel,
+      cycleEndLabel,
+    });
+
   return `
     <section class="welcome-layout appear">
       <article class="panel hero-card">
         <div class="panel-inner">
-          <p class="eyebrow">${state.catalogSize || ALL_VIDEOS.length} videos in the catalog. Shared Friday set of ${marketClipCount}.</p>
-          <h2 class="hero-title">Classify the event. Read the line. Build the board.</h2>
-          <p class="hero-copy">
-            Players enter a name, play the shared Friday lineup of ${marketClipCount} clips, and
-            finish on a weekly leaderboard. Every question runs in the Group 3 public-lines format
-            with live percentages, coin scoring, hot-hand bonuses, and optional Double or Nothing.
-          </p>
+          <div class="mode-switcher">
+            ${renderModeToggleButton("friday", "Friday Lineup", "Shared weekly run")}
+            ${renderModeToggleButton("quiz", "Learning Quiz", "10 videos at once")}
+          </div>
+          ${modeSpecificContent.hero}
+        </div>
+      </article>
 
-          <p class="subtle-copy">
-            Current Friday slate: ${cycleStartLabel}${cycleEndLabel ? ` through ${cycleEndLabel}` : ""}. A new 15-video set and a fresh leaderboard go live every Friday.
-          </p>
+      <aside class="panel">
+        <div class="panel-inner">
+          <div class="table-caption">
+            <div>
+              <p class="eyebrow">${activeMode === "quiz" ? "Learning Board" : "Live Board"}</p>
+              <h2 class="card-title">${MODE_CONFIGS[activeMode].leaderboardTitle}</h2>
+            </div>
+            <span class="pill-note">${hasLeaderboard ? `${leaderboard.length} completed player${leaderboard.length === 1 ? "" : "s"}` : "Waiting on first finish"}</span>
+          </div>
 
-          <div class="feature-strip">
-            <div class="feature-chip">
-              <strong>Run Format</strong>
-              <span>Everyone sees the same ${marketClipCount} videos for the current Friday slate.</span>
+          ${
+            hasLeaderboard
+              ? renderLeaderboardTable(leaderboard, null, activeMode)
+              : `
+                <div class="empty-state">
+                  <p class="empty-state-copy">
+                    ${activeMode === "quiz"
+                      ? "Completed learning quizzes will land here with total correct, accuracy, and completion time."
+                      : "Completed runs will land here with the player name, coin score, and accuracy."}
+                    Analysis &amp; Export uses the same stored data for CSV downloads.
+                  </p>
+                </div>
+              `
+          }
+
+          ${modeSpecificContent.aside}
+        </div>
+      </aside>
+    </section>
+  `;
+}
+
+function renderModeToggleButton(mode, label, caption) {
+  const isActive = getActiveMode() === mode;
+
+  return `
+    <button
+      type="button"
+      class="mode-toggle ${isActive ? "is-active" : ""}"
+      data-action="select-mode"
+      data-mode="${mode}"
+    >
+      <strong>${label}</strong>
+      <span>${caption}</span>
+    </button>
+  `;
+}
+
+function renderFridayLandingContent({
+  leaderboard,
+  hasLeaderboard,
+  marketClipCount,
+  cycleStartLabel,
+  cycleEndLabel,
+}) {
+  return {
+    hero: `
+      <p class="eyebrow">${state.catalogSize || ALL_VIDEOS.length} videos in the catalog. Shared Friday set of ${marketClipCount}.</p>
+      <h2 class="hero-title">Classify the event. Read the line. Build the board.</h2>
+      <p class="hero-copy">
+        Players enter a name, play the shared Friday lineup of ${marketClipCount} clips, and
+        finish on a weekly leaderboard. Every question runs in the Group 3 public-lines format
+        with live percentages, coin scoring, hot-hand bonuses, and optional Double or Nothing.
+      </p>
+
+      <p class="subtle-copy">
+        Current Friday slate: ${cycleStartLabel}${cycleEndLabel ? ` through ${cycleEndLabel}` : ""}. A new 15-video set and a fresh leaderboard go live every Friday.
+      </p>
+
+      <div class="feature-strip">
+        <div class="feature-chip">
+          <strong>Run Format</strong>
+          <span>Everyone sees the same ${marketClipCount} videos for the current Friday slate.</span>
+        </div>
+        <div class="feature-chip">
+          <strong>Group 3 Rules</strong>
+          <span>Every clip shows live public Track and Cascade lines and starts with the coin bank already active.</span>
+        </div>
+        <div class="feature-chip">
+          <strong>Weekly Reset</strong>
+          <span>Each Friday the lineup refreshes and the leaderboard resets for the new week.</span>
+        </div>
+      </div>
+
+      ${renderStartForm({
+        buttonLabel: `Start Friday lineup of ${marketClipCount} videos`,
+        helperCopy: `
+          Every clip now pulls its Track/Cascade answer from the manifest
+          <code>#InteractionType</code>
+          field, so scores, coins, leaderboard standings, and analysis accuracy stay aligned
+          with the new folder layout.
+        `,
+      })}
+    `,
+    aside: `
+      <div class="mini-card-grid">
+        <div class="mini-card">
+          <span>Storage</span>
+          <strong>Shared server</strong>
+          <p>Completed runs upload to the server so leaderboard and analysis stay visible across devices.</p>
+        </div>
+        <div class="mini-card">
+          <span>Analytics</span>
+          <strong>Excel-ready</strong>
+          <p>Use the Analysis &amp; Export button to download shared CSV tables for graphing later.</p>
+        </div>
+      </div>
+    `,
+  };
+}
+
+function renderQuizLandingContent({ leaderboard, hasLeaderboard }) {
+  return {
+    hero: `
+      <p class="eyebrow">${state.catalogSize || ALL_VIDEOS.length} videos in the catalog. Each quiz draws 10 fresh clips.</p>
+      <h2 class="hero-title">Study every clip at once, then submit one learning check.</h2>
+      <p class="hero-copy">
+        The learning quiz is a one-page review board. Every run draws 5 random Track clips and 5
+        random Cascade clips with no repeats, shows all 10 videos at once, and keeps a separate
+        leaderboard focused on accuracy instead of coin scoring.
+      </p>
+
+      <p class="subtle-copy">
+        Choose Track, Cascade, or leave a clip as Undecided while reviewing. Correct answers stay
+        hidden until you submit, then the app reveals the full answer key and lets you review all
+        10 clips with your choices side by side.
+      </p>
+
+      <div class="feature-strip">
+        <div class="feature-chip">
+          <strong>10 Videos</strong>
+          <span>Every quiz shows all 10 clips on one screen so it works like a study board instead of a step-by-step game.</span>
+        </div>
+        <div class="feature-chip">
+          <strong>Balanced Draw</strong>
+          <span>Each run pulls 5 Track and 5 Cascade examples from the full catalog with no repeating clips.</span>
+        </div>
+        <div class="feature-chip">
+          <strong>Separate Board</strong>
+          <span>Learning-mode accuracy saves to its own leaderboard and never mixes with the Friday coin mode.</span>
+        </div>
+      </div>
+
+      ${renderStartForm({
+        buttonLabel: "Start learning quiz of 10 videos",
+        helperCopy: "This mode is designed as a learning tool, so you can rewatch every video before submitting and only see the answer key at the end.",
+      })}
+    `,
+    aside: `
+      <div class="mini-card-grid">
+        <div class="mini-card">
+          <span>Score</span>
+          <strong>Accuracy-first</strong>
+          <p>The quiz leaderboard ranks by total correct and accuracy instead of the Friday coin wallet.</p>
+        </div>
+        <div class="mini-card">
+          <span>Review</span>
+          <strong>Answer key at end</strong>
+          <p>Submit once, then inspect each clip with your choice, the correct label, and full video review on the results screen.</p>
+        </div>
+      </div>
+    `,
+  };
+}
+
+function renderStartForm({ buttonLabel, helperCopy }) {
+  return `
+    <div class="form-shell">
+      <form class="name-form" id="start-form">
+        <label for="player-name" class="subtle-copy">Enter a name to save results to the leaderboard.</label>
+        <input
+          class="text-input"
+          id="player-name"
+          name="player-name"
+          type="text"
+          maxlength="40"
+          autocomplete="name"
+          placeholder="Your classifier name"
+          value="${escapeHtml(state.lastName)}"
+          required
+        />
+        <div class="button-row">
+          <button type="submit" class="primary-button">${buttonLabel}</button>
+          <button type="button" class="secondary-button" data-action="open-help">
+            Learn Track vs Cascade
+          </button>
+        </div>
+      </form>
+
+      <p class="subtle-copy">${helperCopy}</p>
+    </div>
+  `;
+}
+
+function renderRunView(run) {
+  if (run.mode === "quiz") {
+    return run.phase === "quiz-results"
+      ? renderQuizResultsView(run)
+      : renderQuizBoardView(run);
+  }
+
+  return run.phase === "feedback" ? renderFeedbackView(run) : renderQuestionView(run);
+}
+
+function renderQuizBoardView(run) {
+  const quizStatus = buildQuizStatus(run);
+
+  return `
+    <section class="panel appear quiz-board-panel">
+      <div class="panel-inner quiz-layout">
+        <div class="quiz-header">
+          <div class="game-heading-block">
+            <p class="eyebrow">Learning Quiz</p>
+            <h2 class="hero-title">Review all 10 clips, then submit one score.</h2>
+            <p class="game-copy">
+              This learning board draws 5 Track and 5 Cascade clips with no repeats.
+              Answers stay hidden until submission, and the status rail on the right tracks what
+              you have marked as Track, Cascade, or Undecided.
+            </p>
+          </div>
+
+          <div class="status-strip status-strip-compact">
+            <div class="stat-card">
+              <span>Player</span>
+              <strong>${escapeHtml(run.name)}</strong>
             </div>
-            <div class="feature-chip">
-              <strong>Group 3 Rules</strong>
-              <span>Every clip shows live public Track and Cascade lines and starts with the coin bank already active.</span>
+            <div class="stat-card">
+              <span>Reviewed</span>
+              <strong data-quiz-count="reviewed">${quizStatus.decidedCount} / ${getRunVideoCount(run)}</strong>
             </div>
-            <div class="feature-chip">
-              <strong>Weekly Reset</strong>
-              <span>Each Friday the lineup refreshes and the leaderboard resets for the new week.</span>
+            <div class="stat-card">
+              <span>Undecided</span>
+              <strong data-quiz-count="undecided">${quizStatus.undecidedCount}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="quiz-stage">
+          <div class="quiz-main-column">
+            <div class="quiz-video-grid">
+              ${run.videoOrder.map((videoId, index) => renderQuizVideoCard(run, videoId, index)).join("")}
+            </div>
+
+            <div class="quiz-submit-footer">
+              <div class="mini-card quiz-submit-card">
+                <span>Finished reviewing all 10?</span>
+                <strong>Submit from the bottom too.</strong>
+                <p>Use this button after you reach the end of the quiz page to reveal the answer key and save the score.</p>
+                <div class="button-row">
+                  <button type="button" class="primary-button" data-action="submit-quiz">
+                    Submit score and reveal answer key
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div class="form-shell">
-            <form class="name-form" id="start-form">
-              <label for="player-name" class="subtle-copy">Enter a name to save results to the leaderboard.</label>
-              <input
-                class="text-input"
-                id="player-name"
-                name="player-name"
-                type="text"
-                maxlength="40"
-                autocomplete="name"
-                placeholder="Your classifier name"
-                value="${escapeHtml(state.lastName)}"
-                required
-              />
+          <aside class="quiz-sidebar">
+            <div class="decision-card quiz-sidebar-card">
+              <div class="round-note">
+                <strong>Submission rules</strong>
+                <p class="subtle-copy decision-copy">
+                  Undecided is useful while studying, but only Track and Cascade can be correct.
+                  Any clip left Undecided will count as not yet solved when you submit.
+                </p>
+              </div>
+
+              <div class="quiz-status-grid">
+                <div class="mini-card compact-card">
+                  <span>Track picks</span>
+                  <strong data-quiz-count="track">${quizStatus.trackCount}</strong>
+                  <p>Clips currently labeled Track.</p>
+                </div>
+                <div class="mini-card compact-card">
+                  <span>Cascade picks</span>
+                  <strong data-quiz-count="cascade">${quizStatus.cascadeCount}</strong>
+                  <p>Clips currently labeled Cascade.</p>
+                </div>
+                <div class="mini-card compact-card">
+                  <span>Undecided</span>
+                  <strong data-quiz-count="sidebar-undecided">${quizStatus.undecidedCount}</strong>
+                  <p>Clips that still need a final classification.</p>
+                </div>
+              </div>
+
+              <div class="quiz-status-list">
+                ${run.videoOrder.map((videoId, index) => renderQuizStatusItem(run, videoId, index)).join("")}
+              </div>
+
               <div class="button-row">
-                <button type="submit" class="primary-button">Start Friday lineup of ${marketClipCount} videos</button>
-                <button type="button" class="secondary-button" data-action="open-help">
-                  Learn Track vs Cascade
+                <button type="button" class="primary-button" data-action="submit-quiz">
+                  Submit score and reveal answer key
+                </button>
+                <button type="button" class="ghost-button" data-action="open-help">
+                  Need help spotting Track vs Cascade?
                 </button>
               </div>
-            </form>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </section>
+  `;
+}
 
-            <p class="subtle-copy">
-              Every clip now pulls its Track/Cascade answer from the manifest
-              <code>#InteractionType</code>
-              field, so scores, coins, leaderboard standings, and analysis accuracy stay aligned
-              with the new folder layout.
-            </p>
+function renderQuizVideoCard(run, videoId, index) {
+  const video = ALL_VIDEOS_BY_ID[videoId];
+  const selection = getQuizSelection(run, videoId);
+
+  if (!video) {
+    return "";
+  }
+
+  return `
+    <article class="quiz-video-card">
+      <div class="section-pill section-pill-compact">
+        <strong>Video ${index + 1}</strong>
+        <span>${video.label} • ${video.sourceGroup}</span>
+      </div>
+
+      <div class="video-shell quiz-video-shell">
+        <video controls muted playsinline preload="metadata" src="${video.src}"></video>
+      </div>
+
+      <div class="quiz-choice-grid">
+        ${renderQuizChoiceButton(videoId, "track", "Track", selection === "track")}
+        ${renderQuizChoiceButton(videoId, "cascade", "Cascade", selection === "cascade")}
+        ${renderQuizChoiceButton(videoId, "undecided", "Undecided", selection === "undecided")}
+      </div>
+    </article>
+  `;
+}
+
+function renderQuizChoiceButton(videoId, choice, label, isSelected) {
+  return `
+    <button
+      type="button"
+      class="quiz-choice-button quiz-choice-button-${choice} ${isSelected ? "is-selected" : ""}"
+      data-quiz-choice="${choice}"
+      data-video-id="${videoId}"
+      aria-pressed="${isSelected ? "true" : "false"}"
+    >
+      ${label}
+    </button>
+  `;
+}
+
+function renderQuizStatusItem(run, videoId, index) {
+  const video = ALL_VIDEOS_BY_ID[videoId];
+  const selection = getQuizSelection(run, videoId);
+
+  return `
+    <div class="quiz-status-item" data-quiz-status-item="${videoId}">
+      <div>
+        <strong>Video ${index + 1}</strong>
+        <span>${escapeHtml(video?.label || "Unknown clip")}</span>
+      </div>
+      <span class="quiz-status-pill quiz-status-pill-${selection}" data-quiz-status-pill>${titleCase(selection)}</span>
+    </div>
+  `;
+}
+
+function renderQuizResultsView(run) {
+  const leaderboard = buildLeaderboard(state.quizPlayers, "quiz");
+  const stats = calculateRunStats(run.answers, "quiz");
+
+  return `
+    <section class="results-layout appear">
+      <article class="panel">
+        <div class="panel-inner score-panel">
+          <div class="score-shell">
+            <div>
+              <p class="eyebrow">Learning Quiz Complete</p>
+              <h2 class="score-title">${escapeHtml(run.name)} reviewed all ${getRunVideoCount(run)} quiz videos</h2>
+              <p class="hero-copy">
+                Your score is now stored on the separate learning leaderboard. The answer key
+                below reveals each correct label and keeps all 10 clips available for review.
+              </p>
+            </div>
+
+            <div class="score-stack">
+              <div class="score-badge score-badge-quiz">
+                <p class="score-value">${stats.totalCorrect} / ${stats.totalQuestions}</p>
+              </div>
+              <p class="score-caption">${formatPercent(stats.totalAccuracy)} accuracy</p>
+            </div>
+          </div>
+
+          <div class="results-strip results-strip-quiz">
+            <div class="summary-card">
+              <span>Total correct</span>
+              <strong>${stats.totalCorrect}</strong>
+              <p>${stats.totalQuestions - stats.totalCorrect} clips were missed or left undecided.</p>
+            </div>
+            <div class="summary-card">
+              <span>Accuracy</span>
+              <strong>${formatPercent(stats.totalAccuracy)}</strong>
+              <p>Quiz leaderboard ranking is based on total correct, then accuracy.</p>
+            </div>
+            <div class="summary-card">
+              <span>Track pool</span>
+              <strong>${stats.sectionStats.track.correct} / ${stats.sectionStats.track.total}</strong>
+              <p>Track examples correctly identified in this run.</p>
+            </div>
+            <div class="summary-card">
+              <span>Cascade pool</span>
+              <strong>${stats.sectionStats.cascade.correct} / ${stats.sectionStats.cascade.total}</strong>
+              <p>Cascade examples correctly identified in this run.</p>
+            </div>
+          </div>
+
+          <div class="button-row">
+            <button type="button" class="primary-button" data-action="play-again">Start another learning quiz</button>
+            <button type="button" class="secondary-button" data-action="open-analysis">Open analysis</button>
+          </div>
+
+          <div class="quiz-review-grid">
+            ${run.answers.map((answer) => renderQuizReviewCard(answer)).join("")}
           </div>
         </div>
       </article>
@@ -509,45 +972,53 @@ function renderLandingView() {
         <div class="panel-inner">
           <div class="table-caption">
             <div>
-              <p class="eyebrow">Live Board</p>
-              <h2 class="card-title">Leaderboard Preview</h2>
+              <p class="eyebrow">Learning Standings</p>
+              <h2 class="card-title">Learning Quiz Leaderboard</h2>
             </div>
-            <span class="pill-note">${hasLeaderboard ? `${leaderboard.length} completed player${leaderboard.length === 1 ? "" : "s"}` : "Waiting on first finish"}</span>
+            <span class="pill-note">${leaderboard.length} completed player${leaderboard.length === 1 ? "" : "s"}</span>
           </div>
-
-          ${
-            hasLeaderboard
-              ? renderLeaderboardTable(leaderboard, null)
-              : `
-                <div class="empty-state">
-                  <p class="empty-state-copy">
-                    Completed runs will land here with the player name, coin score, and accuracy.
-                    Analysis &amp; Export uses the same stored data for CSV downloads.
-                  </p>
-                </div>
-              `
-          }
-
-          <div class="mini-card-grid">
-            <div class="mini-card">
-              <span>Storage</span>
-              <strong>Shared server</strong>
-              <p>Completed runs upload to the server so leaderboard and analysis stay visible across devices.</p>
-            </div>
-            <div class="mini-card">
-              <span>Analytics</span>
-              <strong>Excel-ready</strong>
-              <p>Use the Analysis &amp; Export button to download shared CSV tables for graphing later.</p>
-            </div>
-          </div>
+          ${renderLeaderboardTable(leaderboard, run.nameKey, "quiz")}
         </div>
       </aside>
     </section>
   `;
 }
 
-function renderRunView(run) {
-  return run.phase === "feedback" ? renderFeedbackView(run) : renderQuestionView(run);
+function renderQuizReviewCard(answer) {
+  const answerState = answer.correct
+    ? "Correct"
+    : answer.choice === "undecided"
+      ? "Undecided"
+      : "Incorrect";
+
+  return `
+    <article class="quiz-review-card">
+      <div class="table-caption quiz-review-header">
+        <div>
+          <p class="eyebrow">${escapeHtml(answer.videoLabel)}</p>
+          <h3 class="card-title">${escapeHtml(answer.sourceGroup)}</h3>
+        </div>
+        <span class="quiz-review-pill ${answer.correct ? "is-correct" : "is-wrong"}">${answerState}</span>
+      </div>
+
+      <div class="video-shell quiz-video-shell">
+        <video controls muted playsinline preload="metadata" src="${answer.videoSrc}"></video>
+      </div>
+
+      <div class="quiz-review-meta">
+        <div class="mini-card compact-card">
+          <span>Your choice</span>
+          <strong>${titleCase(answer.choice)}</strong>
+          <p>${answer.choice === "undecided" ? "Left undecided at submit time." : "Stored exactly as submitted."}</p>
+        </div>
+        <div class="mini-card compact-card">
+          <span>Correct answer</span>
+          <strong>${titleCase(answer.expectedChoice)}</strong>
+          <p>${answer.correct ? "You matched the answer key on this clip." : "Use the replay to compare the event shape again."}</p>
+        </div>
+      </div>
+    </article>
+  `;
 }
 
 function renderQuestionView(run) {
@@ -599,7 +1070,7 @@ function renderQuestionView(run) {
             </div>
 
             <div class="video-shell game-video-shell">
-              <video controls autoplay muted playsinline preload="metadata" src="${video.src}"></video>
+              <video controls autoplay muted playsinline preload="metadata" data-autoplay="true" src="${video.src}"></video>
             </div>
           </div>
 
@@ -745,6 +1216,10 @@ function renderFeedbackView(run) {
 }
 
 function renderResultsView(run) {
+  if (run.mode === "quiz") {
+    return renderQuizResultsView(run);
+  }
+
   const leaderboard = buildLeaderboard(state.players);
   const stats = calculateRunStats(run.answers);
   const marketStats = stats.sectionStats.market || {
@@ -807,14 +1282,16 @@ function renderResultsView(run) {
             </div>
             <span class="pill-note">${leaderboard.length} completed player${leaderboard.length === 1 ? "" : "s"}</span>
           </div>
-          ${renderLeaderboardTable(leaderboard, run.nameKey)}
+          ${renderLeaderboardTable(leaderboard, run.nameKey, "friday")}
         </div>
       </aside>
     </section>
   `;
 }
 
-function renderLeaderboardTable(leaderboard, highlightedNameKey) {
+function renderLeaderboardTable(leaderboard, highlightedNameKey, mode = "friday") {
+  const isQuiz = mode === "quiz";
+
   return `
     <div class="leaderboard-scroll">
       <table class="leaderboard-table">
@@ -822,7 +1299,7 @@ function renderLeaderboardTable(leaderboard, highlightedNameKey) {
           <tr>
             <th>Rank</th>
             <th>Player</th>
-            <th>Coins</th>
+            <th>${isQuiz ? "Score" : "Coins"}</th>
             <th>Accuracy</th>
             <th>Completed</th>
           </tr>
@@ -837,10 +1314,16 @@ function renderLeaderboardTable(leaderboard, highlightedNameKey) {
                   <td class="${index === 0 ? "rank-highlight" : ""}">#${index + 1}</td>
                   <td>${isHighlighted ? "<strong>" : ""}${escapeHtml(player.name)}${isHighlighted ? "</strong>" : ""}</td>
                   <td>
-                    <span class="coin-badge">
-                      <img class="coin-icon" src="${COIN_ICON_SRC}" alt="" aria-hidden="true" />
-                      ${player.finalCoins}
-                    </span>
+                    ${
+                      isQuiz
+                        ? `<span class="score-pill">${player.totalCorrect} / ${player.totalQuestions}</span>`
+                        : `
+                          <span class="coin-badge">
+                            <img class="coin-icon" src="${COIN_ICON_SRC}" alt="" aria-hidden="true" />
+                            ${player.finalCoins}
+                          </span>
+                        `
+                    }
                   </td>
                   <td>${formatPercent(player.totalAccuracy)}</td>
                   <td>${formatDate(player.completedAt)}</td>
@@ -859,10 +1342,27 @@ function renderAnalysisModal() {
     return "";
   }
 
+  return getActiveMode() === "quiz"
+    ? renderQuizAnalysisModal()
+    : renderFridayAnalysisModal();
+}
+
+function renderFridayAnalysisModal() {
   const summaryRows = buildUserSummaryRows(state.players);
   const groupRows = buildGroupRows(state.players);
   const videoRows = buildVideoRows(state.players);
   const timingRows = buildTimingRows(state.players);
+  const growthRows = buildGrowthRows(state.playerHistory, "friday");
+  const weeklyTrendRows = buildFridayWeeklyTrendRows(state.playerHistory);
+  const eventSummaryRows = buildEventSummaryRows(state.analyticsSummary);
+  const recentEventRows = buildRecentEventRows(state.recentAnalyticsEvents);
+  const hasFridayAnalysisData = Boolean(
+    summaryRows.length ||
+    growthRows.length ||
+    weeklyTrendRows.length ||
+    eventSummaryRows.length ||
+    recentEventRows.length,
+  );
 
   const averageCoins = summaryRows.length
     ? summaryRows.reduce((sum, row) => sum + row.finalCoins, 0) / summaryRows.length
@@ -871,123 +1371,317 @@ function renderAnalysisModal() {
     ? summaryRows.reduce((sum, row) => sum + row.totalAccuracy, 0) / summaryRows.length
     : 0;
 
+  return renderAnalysisModalShell({
+    eyebrow: "Owner View",
+    title: "Analysis & Export",
+    description:
+      "This pulls from the shared Friday leaderboard and creates Excel-ready CSV tables for per-user, per-run, and per-video analysis.",
+    body: hasFridayAnalysisData
+      ? `
+          <div class="summary-strip">
+            <div class="summary-card">
+              <span>Completed users</span>
+              <strong>${summaryRows.length}</strong>
+              <p>The live board still shows only the current Friday slate.</p>
+            </div>
+            <div class="summary-card">
+              <span>Total attempts</span>
+              <strong>${state.playerHistory.length}</strong>
+              <p>Historical Friday attempts now persist across weekly lineup resets.</p>
+            </div>
+            <div class="summary-card">
+              <span>Average coins</span>
+              <strong>${averageCoins.toFixed(1)}</strong>
+              <p>Average final wallet across all stored users.</p>
+            </div>
+            <div class="summary-card">
+              <span>Average accuracy</span>
+              <strong>${formatPercent(averageAccuracy)}</strong>
+              <p>Overall correctness rate across the ${getRunVideoCount()}-video Group 3 format.</p>
+            </div>
+          </div>
+
+          ${renderAnalysisTable({
+            title: "Week-to-week Friday accuracy",
+            note: "One row per player and Friday cycle, so you can see whether weekly accuracy improves over time even after the live leaderboard resets.",
+            report: "weekly-growth",
+            headers: ["Player", "Week", "Correct", "Total", "Accuracy", "Coins", "Completed"],
+            rows: weeklyTrendRows.map((row) => [
+              escapeHtml(row.name),
+              row.weekLabel,
+              row.totalCorrect,
+              row.totalQuestions,
+              formatPercent(row.totalAccuracy),
+              row.finalCoins ?? "n/a",
+              formatDate(row.completedAt),
+            ]),
+          })}
+
+          ${renderAnalysisTable({
+            title: "Per-user growth over time",
+            note: "Tracks first week, latest week, best week, and overall improvement for each returning Friday player.",
+            report: "user-growth",
+            headers: ["Player", "Weeks", "First Week", "Latest Week", "Best Accuracy", "Growth", "Latest Coins"],
+            rows: growthRows.map((row) => [
+              escapeHtml(row.name),
+              row.attempts,
+              `${row.firstWeekLabel} • ${formatPercent(row.firstAccuracy)}`,
+              `${row.latestWeekLabel} • ${formatPercent(row.latestAccuracy)}`,
+              formatPercent(row.bestAccuracy),
+              formatSignedPercent(row.accuracyGrowth),
+              row.latestCoins ?? "n/a",
+            ]),
+          })}
+
+          ${renderAnalysisTable({
+            title: "Per-user summary",
+            note: "Use this table for total user performance, final coin score, public-lines accuracy, and average decision timing.",
+            report: "user-summary",
+            headers: ["Player", "Coins", "Total Accuracy", "Public Lines Accuracy", "Avg Response Time", "Avg Clip Time At Pick", "After Half Rate", "Completed"],
+            rows: summaryRows.map((row) => [
+              escapeHtml(row.name),
+              row.finalCoins,
+              formatPercent(row.totalAccuracy),
+              formatPercent(row.marketAccuracy),
+              formatSeconds(row.averageResponseSeconds),
+              formatSeconds(row.averageClipTimeAtChoiceSeconds),
+              formatPercent(row.afterHalfRate),
+              formatDate(row.completedAt),
+            ]),
+          })}
+
+          ${renderAnalysisTable({
+            title: "Per-user group breakdown",
+            note: "One row per user for the single Group 3 public-lines format.",
+            report: "group-breakdown",
+            headers: ["Player", "Group", "Correct", "Total", "Accuracy", "Completed"],
+            rows: groupRows.map((row) => [
+              escapeHtml(row.name),
+              row.groupLabel,
+              row.correct,
+              row.total,
+              formatPercent(row.accuracy),
+              formatDate(row.completedAt),
+            ]),
+          })}
+
+          ${renderAnalysisTable({
+            title: "Per-video public response lines",
+            note: "Tracks completed live picks, then shows Track percentage, Cascade percentage, and overall pick accuracy for every video.",
+            report: "video-lines",
+            headers: ["Video", "Track Picks", "Cascade Picks", "Track %", "Cascade %", "Attempts", "Accuracy"],
+            rows: videoRows.map((row) => [
+              escapeHtml(row.videoLabel),
+              row.trackCount,
+              row.cascadeCount,
+              formatPercent(row.trackPercentage),
+              formatPercent(row.cascadePercentage),
+              row.totalResponses,
+              formatPercent(row.accuracy),
+            ]),
+          })}
+
+          ${renderAnalysisTable({
+            title: "Per-answer response timing",
+            note: "Shows when each player answered relative to the clip halfway point, using both wall-clock response time and the video timestamp at click.",
+            report: "response-timing",
+            headers: ["Player", "Group", "Video", "Choice", "Response Time", "Clip Time At Pick", "Halfway Point", "Delta Vs Half", "Half Position", "Clip Progress", "Completed"],
+            rows: timingRows.map((row) => [
+              escapeHtml(row.name),
+              row.groupLabel,
+              escapeHtml(row.videoLabel),
+              titleCase(row.choice),
+              formatSeconds(row.responseSeconds),
+              formatSeconds(row.videoCurrentTimeSeconds),
+              formatSeconds(row.videoHalfSeconds),
+              formatSignedSeconds(row.secondsFromHalf),
+              row.halfPositionLabel,
+              formatDetailedPercent(row.videoProgress),
+              formatDate(row.completedAt),
+            ]),
+          })}
+
+          ${renderAnalysisTable({
+            title: "Engagement telemetry summary",
+            note: "Aggregates client listeners like help opens, video plays, seeks, answer locks, mode switches, and submissions.",
+            report: "event-summary",
+            headers: ["Event", "Count"],
+            rows: eventSummaryRows.map((row) => [
+              escapeHtml(row.eventType),
+              row.count,
+            ]),
+          })}
+
+          ${renderAnalysisTable({
+            title: "Recent telemetry events",
+            note: "Recent client-side listener events across the app, useful for understanding how users interact with clips and study flow.",
+            report: "recent-events",
+            headers: ["When", "Mode", "Event", "Player", "Run", "Video", "Detail"],
+            rows: recentEventRows.map((row) => [
+              formatDate(row.timestamp),
+              row.mode,
+              row.type,
+              escapeHtml(row.nameKey || "n/a"),
+              escapeHtml(row.runId || "n/a"),
+              escapeHtml(row.videoRef || "n/a"),
+              escapeHtml(row.detail),
+            ]),
+          })}
+        `
+      : renderEmptyAnalysisState(`There are no completed Friday runs yet. Once a player finishes a weekly lineup, the week-to-week growth tables will appear here automatically.`),
+  });
+}
+
+function renderQuizAnalysisModal() {
+  const summaryRows = buildQuizSummaryRows(state.quizPlayers);
+  const detailRows = buildQuizAnswerRows(state.quizPlayers);
+  const growthRows = buildGrowthRows(state.quizHistory, "quiz");
+  const eventSummaryRows = buildEventSummaryRows(state.analyticsSummary);
+  const recentEventRows = buildRecentEventRows(state.recentAnalyticsEvents);
+  const averageAccuracy = summaryRows.length
+    ? summaryRows.reduce((sum, row) => sum + row.totalAccuracy, 0) / summaryRows.length
+    : 0;
+  const averageScore = summaryRows.length
+    ? summaryRows.reduce((sum, row) => sum + row.totalCorrect, 0) / summaryRows.length
+    : 0;
+
+  return renderAnalysisModalShell({
+    eyebrow: "Owner View",
+    title: "Learning Quiz Analysis",
+    description:
+      "This view pulls from the separate learning-quiz leaderboard and exports accuracy-first study results without mixing them into the Friday coin mode.",
+    body: summaryRows.length
+      ? `
+          <div class="summary-strip">
+            <div class="summary-card">
+              <span>Completed users</span>
+              <strong>${summaryRows.length}</strong>
+              <p>Each name stores the latest completed learning quiz for that player.</p>
+            </div>
+            <div class="summary-card">
+              <span>Total attempts</span>
+              <strong>${state.quizHistory.length}</strong>
+              <p>Every quiz attempt is preserved so improvement can be tracked over time.</p>
+            </div>
+            <div class="summary-card">
+              <span>Average correct</span>
+              <strong>${averageScore.toFixed(1)} / ${QUIZ_VIDEO_COUNT}</strong>
+              <p>Average number of correct answers across quiz submissions.</p>
+            </div>
+            <div class="summary-card">
+              <span>Average accuracy</span>
+              <strong>${formatPercent(averageAccuracy)}</strong>
+              <p>Overall correctness rate for the one-page learning quiz.</p>
+            </div>
+          </div>
+
+          ${renderAnalysisTable({
+            title: "Per-user quiz growth",
+            note: "Shows how each learner improves across multiple quiz attempts over time.",
+            report: "quiz-growth",
+            headers: ["Player", "Attempts", "First Score", "Latest Score", "Best Score", "First Accuracy", "Latest Accuracy", "Growth"],
+            rows: growthRows.map((row) => [
+              escapeHtml(row.name),
+              row.attempts,
+              `${row.firstCorrect} / ${row.totalQuestions}`,
+              `${row.latestCorrect} / ${row.totalQuestions}`,
+              `${row.bestCorrect} / ${row.totalQuestions}`,
+              formatPercent(row.firstAccuracy),
+              formatPercent(row.latestAccuracy),
+              formatSignedPercent(row.accuracyGrowth),
+            ]),
+          })}
+
+          ${renderAnalysisTable({
+            title: "Per-user quiz summary",
+            note: "Use this table for total correct, total accuracy, and average decision timing in the learning mode.",
+            report: "quiz-user-summary",
+            headers: ["Player", "Correct", "Accuracy", "Avg Response Time", "Avg Clip Time At Pick", "After Half Rate", "Completed"],
+            rows: summaryRows.map((row) => [
+              escapeHtml(row.name),
+              `${row.totalCorrect} / ${row.totalQuestions}`,
+              formatPercent(row.totalAccuracy),
+              formatSeconds(row.averageResponseSeconds),
+              formatSeconds(row.averageClipTimeAtChoiceSeconds),
+              formatPercent(row.afterHalfRate),
+              formatDate(row.completedAt),
+            ]),
+          })}
+
+          ${renderAnalysisTable({
+            title: "Per-answer learning review",
+            note: "One row per answered quiz clip, including undecided submissions, the expected answer, and response timing.",
+            report: "quiz-answer-detail",
+            headers: ["Player", "Video", "Your Choice", "Correct Answer", "Correct", "Response Time", "Clip Time At Pick", "Completed"],
+            rows: detailRows.map((row) => [
+              escapeHtml(row.name),
+              escapeHtml(row.videoLabel),
+              titleCase(row.choice),
+              titleCase(row.expectedChoice),
+              row.correct ? "Yes" : "No",
+              formatSeconds(row.responseSeconds),
+              formatSeconds(row.videoCurrentTimeSeconds),
+              formatDate(row.completedAt),
+            ]),
+          })}
+
+          ${renderAnalysisTable({
+            title: "Engagement telemetry summary",
+            note: "Aggregates client listeners like quiz choice changes, help opens, video plays, seeks, and submissions.",
+            report: "event-summary",
+            headers: ["Event", "Count"],
+            rows: eventSummaryRows.map((row) => [
+              escapeHtml(row.eventType),
+              row.count,
+            ]),
+          })}
+
+          ${renderAnalysisTable({
+            title: "Recent telemetry events",
+            note: "Recent client-side listener events across both modes for studying behavior and feature usage.",
+            report: "recent-events",
+            headers: ["When", "Mode", "Event", "Player", "Run", "Video", "Detail"],
+            rows: recentEventRows.map((row) => [
+              formatDate(row.timestamp),
+              row.mode,
+              row.type,
+              escapeHtml(row.nameKey || "n/a"),
+              escapeHtml(row.runId || "n/a"),
+              escapeHtml(row.videoRef || "n/a"),
+              escapeHtml(row.detail),
+            ]),
+          })}
+        `
+      : renderEmptyAnalysisState("There are no completed learning quizzes yet. Once someone submits a 10-video quiz, the separate export tables will appear here automatically."),
+  });
+}
+
+function renderAnalysisModalShell({ eyebrow, title, description, body }) {
   return `
     <div class="modal-backdrop is-open" role="dialog" aria-modal="true">
       <section class="modal-panel">
         <div class="modal-inner">
           <div class="modal-header">
             <div>
-              <p class="eyebrow">Owner View</p>
-              <h2 class="modal-title">Analysis &amp; Export</h2>
-              <p class="hero-copy">
-                This pulls from the shared server leaderboard and creates
-                Excel-ready CSV tables for per-user, per-run, and per-video analysis.
-              </p>
+              <p class="eyebrow">${eyebrow}</p>
+              <h2 class="modal-title">${title}</h2>
+              <p class="hero-copy">${description}</p>
             </div>
 
             <button type="button" class="ghost-button" data-action="close-analysis">Close</button>
           </div>
 
-          ${
-            summaryRows.length
-              ? `
-                <div class="summary-strip">
-                  <div class="summary-card">
-                    <span>Completed users</span>
-                    <strong>${summaryRows.length}</strong>
-                    <p>Each name stores the latest completed run for that player.</p>
-                  </div>
-                  <div class="summary-card">
-                    <span>Average coins</span>
-                    <strong>${averageCoins.toFixed(1)}</strong>
-                    <p>Average final wallet across all stored users.</p>
-                  </div>
-                  <div class="summary-card">
-                    <span>Average accuracy</span>
-                    <strong>${formatPercent(averageAccuracy)}</strong>
-                    <p>Overall correctness rate across the ${getRunVideoCount()}-video Group 3 format.</p>
-                  </div>
-                </div>
-
-                ${renderAnalysisTable({
-                  title: "Per-user summary",
-                  note: "Use this table for total user performance, final coin score, public-lines accuracy, and average decision timing.",
-                  report: "user-summary",
-                  headers: ["Player", "Coins", "Total Accuracy", "Public Lines Accuracy", "Avg Response Time", "Avg Clip Time At Pick", "After Half Rate", "Completed"],
-                  rows: summaryRows.map((row) => [
-                    escapeHtml(row.name),
-                    row.finalCoins,
-                    formatPercent(row.totalAccuracy),
-                    formatPercent(row.marketAccuracy),
-                    formatSeconds(row.averageResponseSeconds),
-                    formatSeconds(row.averageClipTimeAtChoiceSeconds),
-                    formatPercent(row.afterHalfRate),
-                    formatDate(row.completedAt),
-                  ]),
-                })}
-
-                ${renderAnalysisTable({
-                  title: "Per-user group breakdown",
-                  note: "One row per user for the single Group 3 public-lines format.",
-                  report: "group-breakdown",
-                  headers: ["Player", "Group", "Correct", "Total", "Accuracy", "Completed"],
-                  rows: groupRows.map((row) => [
-                    escapeHtml(row.name),
-                    row.groupLabel,
-                    row.correct,
-                    row.total,
-                    formatPercent(row.accuracy),
-                    formatDate(row.completedAt),
-                  ]),
-                })}
-
-                ${renderAnalysisTable({
-                  title: "Per-video public response lines",
-                  note: "Tracks completed live picks, then shows Track percentage, Cascade percentage, and overall pick accuracy for every video.",
-                  report: "video-lines",
-                  headers: ["Video", "Track Picks", "Cascade Picks", "Track %", "Cascade %", "Attempts", "Accuracy"],
-                  rows: videoRows.map((row) => [
-                    escapeHtml(row.videoLabel),
-                    row.trackCount,
-                    row.cascadeCount,
-                    formatPercent(row.trackPercentage),
-                    formatPercent(row.cascadePercentage),
-                    row.totalResponses,
-                    formatPercent(row.accuracy),
-                  ]),
-                })}
-
-                ${renderAnalysisTable({
-                  title: "Per-answer response timing",
-                  note: "Shows when each player answered relative to the clip halfway point, using both wall-clock response time and the video timestamp at click.",
-                  report: "response-timing",
-                  headers: ["Player", "Group", "Video", "Choice", "Response Time", "Clip Time At Pick", "Halfway Point", "Delta Vs Half", "Half Position", "Clip Progress", "Completed"],
-                  rows: timingRows.map((row) => [
-                    escapeHtml(row.name),
-                    row.groupLabel,
-                    escapeHtml(row.videoLabel),
-                    titleCase(row.choice),
-                    formatSeconds(row.responseSeconds),
-                    formatSeconds(row.videoCurrentTimeSeconds),
-                    formatSeconds(row.videoHalfSeconds),
-                    formatSignedSeconds(row.secondsFromHalf),
-                    row.halfPositionLabel,
-                    formatDetailedPercent(row.videoProgress),
-                    formatDate(row.completedAt),
-                  ]),
-                })}
-              `
-              : `
-                <div class="empty-state">
-                  <p class="empty-state-copy">
-                    There are no completed runs yet. Once a player finishes all ${getRunVideoCount()} sampled videos, the CSV
-                    tables will appear here automatically.
-                  </p>
-                </div>
-              `
-          }
+          ${body}
         </div>
       </section>
+    </div>
+  `;
+}
+
+function renderEmptyAnalysisState(message) {
+  return `
+    <div class="empty-state">
+      <p class="empty-state-copy">${message}</p>
     </div>
   `;
 }
@@ -1208,6 +1902,7 @@ function initializeAutoplayVideos() {
   const videos = document.querySelectorAll("video");
 
   videos.forEach((video) => {
+    const shouldAutoplay = video.dataset.autoplay === "true";
     const applyPlaybackRate = () => {
       video.defaultPlaybackRate = VIDEO_PLAYBACK_RATE;
       video.playbackRate = VIDEO_PLAYBACK_RATE;
@@ -1215,26 +1910,31 @@ function initializeAutoplayVideos() {
 
     video.muted = true;
     video.defaultMuted = true;
-    video.autoplay = true;
     video.playsInline = true;
     applyPlaybackRate();
 
     video.onloadedmetadata = applyPlaybackRate;
     video.onplay = applyPlaybackRate;
-    video.oncanplay = () => {
-      applyPlaybackRate();
+    video.autoplay = shouldAutoplay;
+
+    if (shouldAutoplay) {
+      video.oncanplay = () => {
+        applyPlaybackRate();
+
+        const playPromise = video.play();
+
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch(() => {});
+        }
+      };
 
       const playPromise = video.play();
 
       if (playPromise && typeof playPromise.catch === "function") {
         playPromise.catch(() => {});
       }
-    };
-
-    const playPromise = video.play();
-
-    if (playPromise && typeof playPromise.catch === "function") {
-      playPromise.catch(() => {});
+    } else {
+      video.oncanplay = applyPlaybackRate;
     }
   });
 }
@@ -1269,25 +1969,37 @@ function goHome() {
   }
 
   render();
-  void syncPlayersFromServer();
+  void syncAllDataFromServer();
 }
 
 function initializeSharedPlayers() {
-  void syncPlayersFromServer();
+  void syncAllDataFromServer();
 
   if (!playerSyncTimerId) {
     playerSyncTimerId = window.setInterval(() => {
       if (!state.currentRun) {
-        void syncPlayersFromServer();
+        void syncAllDataFromServer();
       }
     }, PLAYER_SYNC_INTERVAL_MS);
   }
 
   window.addEventListener("focus", () => {
     if (!state.currentRun) {
-      void syncPlayersFromServer();
+      void syncAllDataFromServer();
     }
   });
+}
+
+async function syncAllDataFromServer() {
+  await Promise.all([
+    syncPlayersFromServer(),
+    syncQuizPlayersFromServer(),
+    syncAnalyticsFromServer(),
+  ]);
+}
+
+async function syncLeaderboardsFromServer() {
+  await Promise.all([syncPlayersFromServer(), syncQuizPlayersFromServer()]);
 }
 
 async function syncPlayersFromServer() {
@@ -1301,19 +2013,7 @@ async function syncPlayersFromServer() {
     }
 
     const payload = await response.json();
-    state.players = Array.isArray(payload.players) ? payload.players : [];
-    state.activeCycleStart = typeof payload.activeCycleStart === "string"
-      ? payload.activeCycleStart
-      : null;
-    state.activeCycleEnd = typeof payload.activeCycleEnd === "string"
-      ? payload.activeCycleEnd
-      : null;
-    state.activeVideoIds = Array.isArray(payload.activeVideoIds)
-      ? payload.activeVideoIds.filter((videoId) => typeof videoId === "string")
-      : [];
-    state.catalogSize = typeof payload.catalogSize === "number"
-      ? payload.catalogSize
-      : state.catalogSize;
+    applyFridayPayload(payload);
     state.scheduleLoaded = true;
     state.scheduleError = null;
     applyWeeklyVideoSelection();
@@ -1331,6 +2031,57 @@ async function syncPlayersFromServer() {
       ? error.message
       : "Couldn't load the shared Friday lineup.";
     render();
+  }
+}
+
+async function syncQuizPlayersFromServer() {
+  try {
+    const response = await fetch(`${API_QUIZ_PLAYERS_URL}?t=${Date.now()}`, {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to load learning-quiz players: ${response.status}`);
+    }
+
+    const payload = await response.json();
+    applyQuizPayload(payload);
+    state.quizLeaderboardLoaded = true;
+    state.quizLeaderboardError = null;
+
+    if (!state.currentRun || state.showAnalysis || state.lastCompletedRun || getActiveMode() === "quiz") {
+      render();
+    }
+  } catch (error) {
+    console.error(error);
+    state.quizLeaderboardLoaded = true;
+    state.quizLeaderboardError = error instanceof Error
+      ? error.message
+      : "Couldn't load the learning quiz leaderboard.";
+    render();
+  }
+}
+
+async function syncAnalyticsFromServer() {
+  try {
+    const response = await fetch(`${API_ANALYTICS_URL}?t=${Date.now()}`, {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to load analytics: ${response.status}`);
+    }
+
+    const payload = await response.json();
+    applyAnalyticsPayload(payload);
+    state.analyticsLoaded = true;
+    state.analyticsError = null;
+  } catch (error) {
+    console.error(error);
+    state.analyticsLoaded = true;
+    state.analyticsError = error instanceof Error
+      ? error.message
+      : "Couldn't load analytics telemetry.";
   }
 }
 
@@ -1359,40 +2110,125 @@ async function uploadPlayerRecord(playerRecord) {
     throw new Error(message);
   }
 
-  const payload = await response.json();
-  return Array.isArray(payload.players) ? payload.players : [];
+  return response.json();
 }
 
-function beginRun(rawName) {
+async function uploadQuizPlayerRecord(playerRecord) {
+  const response = await fetch(API_QUIZ_PLAYERS_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(playerRecord),
+  });
+
+  if (!response.ok) {
+    let message = `Failed to upload quiz player record: ${response.status}`;
+
+    try {
+      const payload = await response.json();
+
+      if (typeof payload.error === "string" && payload.error) {
+        message = payload.error;
+      }
+    } catch (error) {
+      console.error(error);
+    }
+
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+function applyFridayPayload(payload) {
+  state.players = Array.isArray(payload.players) ? payload.players : [];
+  state.playerHistory = Array.isArray(payload.history) ? payload.history : [];
+  state.activeCycleStart = typeof payload.activeCycleStart === "string"
+    ? payload.activeCycleStart
+    : null;
+  state.activeCycleEnd = typeof payload.activeCycleEnd === "string"
+    ? payload.activeCycleEnd
+    : null;
+  state.activeVideoIds = Array.isArray(payload.activeVideoIds)
+    ? payload.activeVideoIds.filter((videoId) => typeof videoId === "string")
+    : [];
+  state.catalogSize = typeof payload.catalogSize === "number"
+    ? payload.catalogSize
+    : state.catalogSize;
+}
+
+function applyQuizPayload(payload) {
+  state.quizPlayers = Array.isArray(payload.players) ? payload.players : [];
+  state.quizHistory = Array.isArray(payload.history) ? payload.history : [];
+  state.catalogSize = typeof payload.catalogSize === "number"
+    ? payload.catalogSize
+    : state.catalogSize;
+}
+
+function applyAnalyticsPayload(payload) {
+  state.analyticsSummary = payload?.summary && typeof payload.summary === "object"
+    ? payload.summary
+    : null;
+  state.recentAnalyticsEvents = Array.isArray(payload?.recentEvents)
+    ? payload.recentEvents
+    : [];
+}
+
+function beginRun(rawName, mode = "friday") {
   const name = rawName.trim();
   const questionStartedAt = new Date().toISOString();
+  const normalizedMode = mode === "quiz" ? "quiz" : "friday";
 
   state.lastName = name;
   saveStorage(STORAGE_KEYS.lastName, name);
+  state.selectedMode = normalizedMode;
+  saveStorage(STORAGE_KEYS.selectedMode, normalizedMode);
 
   state.lastCompletedRun = null;
-  state.currentRun = {
-    id: `run-${Date.now()}`,
-    name,
-    nameKey: normalizeName(name),
-    cycleStart: state.activeCycleStart,
-    videoOrder: buildRunVideoOrder(),
-    currentIndex: 0,
-    phase: "question",
-    answers: [],
-    coins: null,
-    startedAt: new Date().toISOString(),
-    questionStartedAt,
-  };
+  state.currentRun = normalizedMode === "quiz"
+    ? {
+      id: `quiz-run-${Date.now()}`,
+      mode: "quiz",
+      name,
+      nameKey: normalizeName(name),
+      videoOrder: buildQuizRunVideoOrder(),
+      quizChoices: {},
+      currentIndex: 0,
+      phase: "quiz-board",
+      answers: [],
+      startedAt: new Date().toISOString(),
+      questionStartedAt,
+    }
+    : {
+      id: `run-${Date.now()}`,
+      mode: "friday",
+      name,
+      nameKey: normalizeName(name),
+      cycleStart: state.activeCycleStart,
+      videoOrder: buildRunVideoOrder("friday"),
+      currentIndex: 0,
+      phase: "question",
+      answers: [],
+      coins: null,
+      startedAt: new Date().toISOString(),
+      questionStartedAt,
+    };
 
   saveStorage(STORAGE_KEYS.currentRun, state.currentRun);
+  trackEvent("run_started", {
+    mode: normalizedMode,
+    nameKey: state.currentRun.nameKey,
+    runId: state.currentRun.id,
+    videoCount: getRunVideoCount(state.currentRun),
+  });
   render();
 }
 
 function handleChoice(choice) {
   const run = state.currentRun;
 
-  if (!run || run.phase !== "question") {
+  if (!run || run.mode === "quiz" || run.phase !== "question") {
     return;
   }
 
@@ -1456,9 +2292,52 @@ function handleChoice(choice) {
     videoProgress: timing.videoProgress,
   });
 
+  trackEvent("friday_answer_locked", {
+    mode: "friday",
+    runId: run.id,
+    nameKey: run.nameKey,
+    videoId: video.id,
+    choice,
+    correct,
+    doubleDown,
+    responseSeconds: timing.responseSeconds,
+    videoCurrentTimeSeconds: timing.videoCurrentTimeSeconds,
+    questionNumber: run.currentIndex + 1,
+  });
+
   run.phase = "feedback";
   saveStorage(STORAGE_KEYS.currentRun, run);
   render();
+}
+
+function setQuizChoice(videoId, choice) {
+  const run = state.currentRun;
+
+  if (!run || run.mode !== "quiz") {
+    return;
+  }
+
+  const previousChoice = getQuizSelection(run, videoId);
+
+  if (previousChoice === choice) {
+    return;
+  }
+
+  run.quizChoices = {
+    ...(run.quizChoices || {}),
+    [videoId]: choice,
+  };
+  saveStorage(STORAGE_KEYS.currentRun, run);
+  trackEvent("quiz_choice_updated", {
+    mode: "quiz",
+    runId: run.id,
+    nameKey: run.nameKey,
+    videoId,
+    previousChoice,
+    nextChoice: choice,
+    decidedCount: buildQuizStatus(run).decidedCount,
+  });
+  updateQuizSelectionUi(run, videoId);
 }
 
 async function advanceRun() {
@@ -1487,11 +2366,17 @@ async function finalizeRun() {
     return;
   }
 
+  if (run.mode === "quiz") {
+    await finalizeQuizRun(run);
+    return;
+  }
+
   const stats = calculateRunStats(run.answers);
   const completedAt = new Date().toISOString();
 
   const playerRecord = {
     id: run.id,
+    mode: "friday",
     name: run.name,
     nameKey: run.nameKey,
     cycleStart: run.cycleStart || state.activeCycleStart,
@@ -1506,7 +2391,17 @@ async function finalizeRun() {
   };
 
   try {
-    state.players = await uploadPlayerRecord(playerRecord);
+    const payload = await uploadPlayerRecord(playerRecord);
+    applyFridayPayload(payload);
+    trackEvent("run_completed", {
+      mode: "friday",
+      runId: run.id,
+      nameKey: run.nameKey,
+      totalCorrect: stats.totalCorrect,
+      totalQuestions: stats.totalQuestions,
+      totalAccuracy: stats.totalAccuracy,
+      finalCoins: playerRecord.finalCoins,
+    });
     state.lastCompletedRun = playerRecord;
     state.currentRun = null;
     localStorage.removeItem(STORAGE_KEYS.currentRun);
@@ -1529,12 +2424,105 @@ async function finalizeRun() {
   }
 }
 
-function calculateRunStats(answers) {
+function submitQuizRun() {
+  const run = state.currentRun;
+
+  if (!run || run.mode !== "quiz") {
+    return;
+  }
+
+  void finalizeRun();
+}
+
+async function finalizeQuizRun(run) {
+  const completedAt = new Date().toISOString();
+  const answers = run.videoOrder.map((videoId, index) => {
+    const video = ALL_VIDEOS_BY_ID[videoId];
+    const choice = getQuizSelection(run, videoId);
+    const expectedChoice = getExpectedChoice(videoId);
+    const timing = getCurrentQuestionTiming(run.questionStartedAt);
+
+    return {
+      videoId,
+      videoLabel: video?.label || `Video ${index + 1}`,
+      videoSrc: video?.src || "",
+      sourceGroup: video?.sourceGroup || "",
+      questionNumber: index + 1,
+      sectionId: expectedChoice,
+      sectionLabel: titleCase(expectedChoice),
+      sectionQuestionNumber: index + 1,
+      choice,
+      expectedChoice,
+      correct: choice === expectedChoice,
+      publicLines: null,
+      questionStartedAt: timing.questionStartedAt,
+      answeredAt: timing.answeredAt,
+      responseSeconds: timing.responseSeconds,
+      videoCurrentTimeSeconds: timing.videoCurrentTimeSeconds,
+      videoDurationSeconds: timing.videoDurationSeconds,
+      videoHalfSeconds: timing.videoHalfSeconds,
+      secondsFromHalf: timing.secondsFromHalf,
+      halfComparison: timing.halfComparison,
+      videoProgress: timing.videoProgress,
+    };
+  });
+
+  run.answers = answers;
+  run.phase = "quiz-results";
+
+  const stats = calculateRunStats(answers, "quiz");
+  const playerRecord = {
+    id: run.id,
+    mode: "quiz",
+    name: run.name,
+    nameKey: run.nameKey,
+    startedAt: run.startedAt,
+    completedAt,
+    finalCoins: null,
+    totalCorrect: stats.totalCorrect,
+    totalQuestions: stats.totalQuestions,
+    totalAccuracy: stats.totalAccuracy,
+    sectionStats: stats.sectionStats,
+    answers,
+  };
+
+  try {
+    const payload = await uploadQuizPlayerRecord(playerRecord);
+    applyQuizPayload(payload);
+    trackEvent("run_completed", {
+      mode: "quiz",
+      runId: run.id,
+      nameKey: run.nameKey,
+      totalCorrect: stats.totalCorrect,
+      totalQuestions: stats.totalQuestions,
+      totalAccuracy: stats.totalAccuracy,
+    });
+    state.lastCompletedRun = playerRecord;
+    state.currentRun = null;
+    localStorage.removeItem(STORAGE_KEYS.currentRun);
+    render();
+  } catch (error) {
+    console.error(error);
+    window.alert(
+      "Couldn't upload this learning quiz yet. The finished review stays on this device, so please try again in a moment.",
+    );
+    state.currentRun = run;
+    saveStorage(STORAGE_KEYS.currentRun, run);
+  }
+}
+
+function calculateRunStats(answers, mode = "friday") {
   const totalQuestions = answers.length;
   const totalCorrect = answers.filter((answer) => answer.correct).length;
   const totalAccuracy = totalQuestions ? totalCorrect / totalQuestions : 0;
 
-  const sectionStats = SECTIONS.reduce((stats, section) => {
+  const sectionDefinitions = mode === "quiz"
+    ? [
+      { id: "track" },
+      { id: "cascade" },
+    ]
+    : SECTIONS;
+  const sectionStats = sectionDefinitions.reduce((stats, section) => {
     const sectionAnswers = answers.filter((answer) => answer.sectionId === section.id);
     const correct = sectionAnswers.filter((answer) => answer.correct).length;
     const total = sectionAnswers.length;
@@ -1556,8 +2544,20 @@ function calculateRunStats(answers) {
   };
 }
 
-function buildLeaderboard(players) {
+function buildLeaderboard(players, mode = "friday") {
   return [...players].sort((left, right) => {
+    if (mode === "quiz") {
+      if (right.totalCorrect !== left.totalCorrect) {
+        return right.totalCorrect - left.totalCorrect;
+      }
+
+      if (right.totalAccuracy !== left.totalAccuracy) {
+        return right.totalAccuracy - left.totalAccuracy;
+      }
+
+      return new Date(left.completedAt).getTime() - new Date(right.completedAt).getTime();
+    }
+
     if (right.finalCoins !== left.finalCoins) {
       return right.finalCoins - left.finalCoins;
     }
@@ -1571,7 +2571,7 @@ function buildLeaderboard(players) {
 }
 
 function buildUserSummaryRows(players) {
-  return buildLeaderboard(players).map((player) => ({
+  return buildLeaderboard(players, "friday").map((player) => ({
     name: player.name,
     finalCoins: player.finalCoins,
     totalAccuracy: player.totalAccuracy,
@@ -1587,8 +2587,156 @@ function buildUserSummaryRows(players) {
   }));
 }
 
+function buildQuizSummaryRows(players) {
+  return buildLeaderboard(players, "quiz").map((player) => ({
+    name: player.name,
+    totalCorrect: player.totalCorrect,
+    totalQuestions: player.totalQuestions,
+    totalAccuracy: player.totalAccuracy,
+    averageResponseSeconds: averageOfValues(
+      player.answers.map((answer) => answer.responseSeconds),
+    ),
+    averageClipTimeAtChoiceSeconds: averageOfValues(
+      player.answers.map((answer) => answer.videoCurrentTimeSeconds),
+    ),
+    afterHalfRate: calculateAfterHalfRate(player.answers),
+    completedAt: player.completedAt,
+  }));
+}
+
+function buildGrowthRows(history, mode) {
+  const groupedHistory = history.reduce((groups, record) => {
+    const nameKey = record?.nameKey;
+
+    if (!nameKey) {
+      return groups;
+    }
+
+    groups[nameKey] = groups[nameKey] || [];
+    groups[nameKey].push(record);
+    return groups;
+  }, {});
+
+  return Object.values(groupedHistory)
+    .map((records) => {
+      const sortedRecords = [...records].sort(
+        (left, right) => new Date(left.completedAt).getTime() - new Date(right.completedAt).getTime(),
+      );
+      const first = sortedRecords[0];
+      const latest = sortedRecords[sortedRecords.length - 1];
+      const best = sortedRecords.reduce((currentBest, record) => {
+        if (!currentBest) {
+          return record;
+        }
+
+        if ((record.totalAccuracy || 0) > (currentBest.totalAccuracy || 0)) {
+          return record;
+        }
+
+        if ((record.totalAccuracy || 0) === (currentBest.totalAccuracy || 0) &&
+          (record.totalCorrect || 0) > (currentBest.totalCorrect || 0)) {
+          return record;
+        }
+
+        return currentBest;
+      }, null);
+
+      return {
+        name: latest.name,
+        attempts: sortedRecords.length,
+        totalQuestions: latest.totalQuestions || first.totalQuestions || 0,
+        firstAccuracy: first.totalAccuracy || 0,
+        latestAccuracy: latest.totalAccuracy || 0,
+        bestAccuracy: best?.totalAccuracy || 0,
+        accuracyGrowth: (latest.totalAccuracy || 0) - (first.totalAccuracy || 0),
+        firstCorrect: first.totalCorrect || 0,
+        latestCorrect: latest.totalCorrect || 0,
+        bestCorrect: best?.totalCorrect || 0,
+        latestCoins: mode === "friday" ? latest.finalCoins : null,
+        firstWeekLabel: formatCycleDate(first.cycleStart) || "n/a",
+        latestWeekLabel: formatCycleDate(latest.cycleStart) || "n/a",
+      };
+    })
+    .sort((left, right) => {
+      if (right.latestAccuracy !== left.latestAccuracy) {
+        return right.latestAccuracy - left.latestAccuracy;
+      }
+
+      if (right.attempts !== left.attempts) {
+        return right.attempts - left.attempts;
+      }
+
+      return left.name.localeCompare(right.name);
+    });
+}
+
+function buildFridayWeeklyTrendRows(history) {
+  return [...history]
+    .filter((record) => record?.cycleStart)
+    .sort((left, right) => {
+      const cycleComparison = `${left.cycleStart}`.localeCompare(`${right.cycleStart}`);
+
+      if (cycleComparison !== 0) {
+        return cycleComparison;
+      }
+
+      return `${left.name}`.localeCompare(`${right.name}`);
+    })
+    .map((record) => ({
+      name: record.name,
+      cycleStart: record.cycleStart,
+      weekLabel: formatCycleDate(record.cycleStart),
+      totalCorrect: record.totalCorrect || 0,
+      totalQuestions: record.totalQuestions || 0,
+      totalAccuracy: record.totalAccuracy || 0,
+      finalCoins: record.finalCoins,
+      completedAt: record.completedAt,
+    }));
+}
+
+function buildQuizAnswerRows(players) {
+  return buildLeaderboard(players, "quiz").flatMap((player) =>
+    player.answers.map((answer) => ({
+      name: player.name,
+      videoLabel: answer.videoLabel,
+      choice: answer.choice,
+      expectedChoice: answer.expectedChoice || getExpectedChoice(answer.videoId),
+      correct: answer.correct,
+      responseSeconds: answer.responseSeconds ?? null,
+      videoCurrentTimeSeconds: answer.videoCurrentTimeSeconds ?? null,
+      completedAt: player.completedAt,
+    })),
+  );
+}
+
+function buildEventSummaryRows(summary) {
+  const eventCounts = summary?.eventCounts && typeof summary.eventCounts === "object"
+    ? summary.eventCounts
+    : {};
+
+  return Object.entries(eventCounts).map(([eventType, count]) => ({
+    eventType,
+    count,
+  }));
+}
+
+function buildRecentEventRows(events) {
+  return [...events]
+    .slice()
+    .reverse()
+    .map((event) => ({
+      timestamp: event.timestamp,
+      mode: event.mode || "unknown",
+      type: event.type || "unknown",
+      nameKey: event.nameKey || null,
+      runId: event.runId || null,
+      videoRef: simplifyVideoRef(event.videoId || event.videoSrc || null),
+      detail: buildEventDetail(event),
+    }));
+}
+
 function buildGroupRows(players) {
-  return buildLeaderboard(players).flatMap((player) =>
+  return buildLeaderboard(players, "friday").flatMap((player) =>
     SECTIONS.map((section) => ({
       name: player.name,
       groupLabel: `${section.label}: ${section.title}`,
@@ -1617,7 +2765,7 @@ function buildVideoRows(players) {
 }
 
 function buildTimingRows(players) {
-  return buildLeaderboard(players).flatMap((player) =>
+  return buildLeaderboard(players, "friday").flatMap((player) =>
     player.answers.map((answer) => ({
       name: player.name,
       groupLabel: answer.sectionLabel,
@@ -1689,11 +2837,17 @@ function ensureCurrentRunVideoOrder() {
 
 function getVideoForRunIndex(run, index) {
   const videoId = Array.isArray(run?.videoOrder) ? run.videoOrder[index] : null;
+  if (run?.mode === "quiz") {
+    return ALL_VIDEOS_BY_ID[videoId] || ALL_VIDEOS[index];
+  }
+
   return VIDEOS_BY_ID[videoId] || VIDEOS[index];
 }
 
 function getRunVideoCount(run = state.currentRun) {
-  const configuredCount = getConfiguredRunVideoCount();
+  const configuredCount = run?.mode === "quiz"
+    ? QUIZ_VIDEO_COUNT
+    : getConfiguredRunVideoCount();
 
   if (Array.isArray(run?.videoOrder) && run.videoOrder.length) {
     return Math.min(run.videoOrder.length, configuredCount);
@@ -1706,12 +2860,26 @@ function getConfiguredRunVideoCount() {
   return Math.min(RUN_VIDEO_COUNT, VIDEOS.length);
 }
 
-function buildRunVideoOrder() {
+function buildRunVideoOrder(mode = "friday") {
+  if (mode === "quiz") {
+    return buildQuizRunVideoOrder();
+  }
+
   return VIDEOS.map((video) => video.id);
 }
 
 function isCurrentRunCompatible(run) {
-  if (!run || run.cycleStart !== state.activeCycleStart) {
+  if (!run) {
+    return false;
+  }
+
+  if (run.mode === "quiz") {
+    return Array.isArray(run.videoOrder) &&
+      run.videoOrder.length === QUIZ_VIDEO_COUNT &&
+      run.videoOrder.every((videoId) => Boolean(ALL_VIDEOS_BY_ID[videoId]));
+  }
+
+  if (run.cycleStart !== state.activeCycleStart) {
     return false;
   }
 
@@ -1826,6 +2994,254 @@ function getSeededLineCounts(videoId) {
   };
 }
 
+function buildQuizRunVideoOrder() {
+  const trackVideos = shuffleList(
+    ALL_VIDEOS.filter((video) => video.correctChoice === "track"),
+  ).slice(0, QUIZ_TRACK_COUNT);
+  const cascadeVideos = shuffleList(
+    ALL_VIDEOS.filter((video) => video.correctChoice === "cascade"),
+  ).slice(0, QUIZ_CASCADE_COUNT);
+
+  return shuffleList([...trackVideos, ...cascadeVideos]).map((video) => video.id);
+}
+
+function getQuizSelection(run, videoId) {
+  return run.quizChoices?.[videoId] || "undecided";
+}
+
+function buildQuizStatus(run) {
+  return run.videoOrder.reduce((summary, videoId) => {
+    const selection = getQuizSelection(run, videoId);
+
+    if (selection === "track") {
+      summary.trackCount += 1;
+      summary.decidedCount += 1;
+    } else if (selection === "cascade") {
+      summary.cascadeCount += 1;
+      summary.decidedCount += 1;
+    } else {
+      summary.undecidedCount += 1;
+    }
+
+    return summary;
+  }, {
+    trackCount: 0,
+    cascadeCount: 0,
+    undecidedCount: 0,
+    decidedCount: 0,
+  });
+}
+
+function getPlayersForMode(mode) {
+  return mode === "quiz" ? state.quizPlayers : state.players;
+}
+
+function getActiveMode() {
+  if (state.currentRun?.mode) {
+    return state.currentRun.mode;
+  }
+
+  if (state.lastCompletedRun?.mode) {
+    return state.lastCompletedRun.mode;
+  }
+
+  return state.selectedMode === "quiz" ? "quiz" : "friday";
+}
+
+function selectMode(mode) {
+  if (!MODE_CONFIGS[mode] || state.currentRun) {
+    return;
+  }
+
+  state.selectedMode = mode;
+  saveStorage(STORAGE_KEYS.selectedMode, mode);
+  render();
+}
+
+function updateQuizSelectionUi(run, videoId) {
+  const selection = getQuizSelection(run, videoId);
+  const quizStatus = buildQuizStatus(run);
+
+  document.querySelectorAll("[data-video-id]").forEach((button) => {
+    if (button.dataset.videoId !== videoId || !button.dataset.quizChoice) {
+      return;
+    }
+
+    const isSelected = button.dataset.quizChoice === selection;
+    button.classList.toggle("is-selected", isSelected);
+    button.setAttribute("aria-pressed", isSelected ? "true" : "false");
+  });
+
+  document.querySelectorAll("[data-quiz-status-item]").forEach((item) => {
+    if (item.dataset.quizStatusItem !== videoId) {
+      return;
+    }
+
+    const pill = item.querySelector("[data-quiz-status-pill]");
+
+    if (!pill) {
+      return;
+    }
+
+    pill.className = `quiz-status-pill quiz-status-pill-${selection}`;
+    pill.textContent = titleCase(selection);
+  });
+
+  const countValues = {
+    reviewed: `${quizStatus.decidedCount} / ${getRunVideoCount(run)}`,
+    undecided: `${quizStatus.undecidedCount}`,
+    track: `${quizStatus.trackCount}`,
+    cascade: `${quizStatus.cascadeCount}`,
+    "sidebar-undecided": `${quizStatus.undecidedCount}`,
+  };
+
+  document.querySelectorAll("[data-quiz-count]").forEach((element) => {
+    const nextValue = countValues[element.dataset.quizCount];
+
+    if (typeof nextValue === "string") {
+      element.textContent = nextValue;
+    }
+  });
+}
+
+function initializeAnalyticsTracking() {
+  trackEvent("page_opened", {
+    mode: getActiveMode(),
+  });
+
+  document.addEventListener("play", (event) => {
+    handleVideoAnalyticsEvent("video_play", event);
+  }, true);
+  document.addEventListener("pause", (event) => {
+    handleVideoAnalyticsEvent("video_pause", event);
+  }, true);
+  document.addEventListener("ended", (event) => {
+    handleVideoAnalyticsEvent("video_ended", event);
+  }, true);
+  document.addEventListener("seeking", (event) => {
+    handleVideoAnalyticsEvent("video_seek", event);
+  }, true);
+  document.addEventListener("ratechange", (event) => {
+    handleVideoAnalyticsEvent("video_rate_change", event);
+  }, true);
+
+  document.addEventListener("visibilitychange", () => {
+    trackEvent("visibility_changed", {
+      mode: getActiveMode(),
+      visibilityState: document.visibilityState,
+    });
+
+    if (document.visibilityState === "hidden") {
+      flushAnalyticsEvents({ useBeacon: true });
+    }
+  });
+
+  window.addEventListener("beforeunload", () => {
+    flushAnalyticsEvents({ useBeacon: true });
+  });
+}
+
+function handleVideoAnalyticsEvent(type, event) {
+  const video = event.target;
+
+  if (!(video instanceof HTMLVideoElement)) {
+    return;
+  }
+
+  const eventKey = `${type}:${video.currentSrc || video.src || video.getAttribute("src") || "unknown"}`;
+  const now = Date.now();
+  const lastSentAt = videoAnalyticsTimestamps.get(eventKey) || 0;
+  const minimumGap = type === "video_seek" ? 1200 : 400;
+
+  if (now - lastSentAt < minimumGap) {
+    return;
+  }
+
+  videoAnalyticsTimestamps.set(eventKey, now);
+
+  trackEvent(type, {
+    mode: getActiveMode(),
+    runId: state.currentRun?.id || null,
+    nameKey: state.currentRun?.nameKey || state.lastCompletedRun?.nameKey || null,
+    videoSrc: video.currentSrc || video.src || video.getAttribute("src") || null,
+    currentTimeSeconds: getFiniteNumber(video.currentTime),
+    durationSeconds: getFiniteNumber(video.duration),
+    playbackRate: getFiniteNumber(video.playbackRate),
+    paused: video.paused,
+  });
+}
+
+function trackEvent(type, details = {}) {
+  const eventRecord = {
+    id: createSessionId(),
+    sessionId: state.analyticsSessionId,
+    type,
+    timestamp: new Date().toISOString(),
+    mode: details.mode || getActiveMode(),
+    nameKey: details.nameKey || state.currentRun?.nameKey || state.lastCompletedRun?.nameKey || null,
+    ...details,
+  };
+
+  analyticsQueue.push(eventRecord);
+  scheduleAnalyticsFlush();
+}
+
+function scheduleAnalyticsFlush() {
+  if (analyticsFlushTimerId) {
+    return;
+  }
+
+  analyticsFlushTimerId = window.setTimeout(() => {
+    analyticsFlushTimerId = null;
+    void flushAnalyticsEvents();
+  }, ANALYTICS_FLUSH_INTERVAL_MS);
+}
+
+async function flushAnalyticsEvents({ useBeacon = false } = {}) {
+  if (!analyticsQueue.length) {
+    return;
+  }
+
+  const events = analyticsQueue.splice(0, analyticsQueue.length);
+  const payload = JSON.stringify({ events });
+
+  if (useBeacon && navigator.sendBeacon) {
+    const sent = navigator.sendBeacon(
+      API_ANALYTICS_EVENTS_URL,
+      new Blob([payload], { type: "application/json" }),
+    );
+
+    if (!sent) {
+      analyticsQueue.unshift(...events);
+    }
+
+    return;
+  }
+
+  try {
+    const response = await fetch(API_ANALYTICS_EVENTS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: payload,
+      keepalive: true,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to persist analytics events: ${response.status}`);
+    }
+
+    const analyticsPayload = await response.json();
+    applyAnalyticsPayload(analyticsPayload);
+    state.analyticsLoaded = true;
+    state.analyticsError = null;
+  } catch (error) {
+    console.error(error);
+    analyticsQueue.unshift(...events);
+  }
+}
+
 function getCombinedVideoLineStats(videoId, players) {
   const seededCounts = getSeededLineCounts(videoId);
   const answers = players.flatMap((player) =>
@@ -1864,7 +3280,7 @@ function getSeededCorrectCount(videoId, seededCounts) {
 }
 
 function getExpectedChoice(videoId) {
-  return VIDEOS_BY_ID[videoId]?.correctChoice || null;
+  return ALL_VIDEOS_BY_ID[videoId]?.correctChoice || VIDEOS_BY_ID[videoId]?.correctChoice || null;
 }
 
 function upsertPlayerRecord(players, playerRecord) {
@@ -1888,9 +3304,10 @@ function updateAnalysisButton() {
     return;
   }
 
+  const playerCount = getPlayersForMode(getActiveMode()).length;
   button.disabled = false;
-  button.textContent = state.players.length
-    ? `Analysis & Export (${state.players.length})`
+  button.textContent = playerCount
+    ? `Analysis & Export (${playerCount})`
     : "Analysis & Export";
 }
 
@@ -1948,6 +3365,96 @@ function downloadCsv(report) {
           ? decimalPercent(row.videoProgress)
           : null,
         completed_at: row.completedAt,
+      })),
+    },
+    "user-growth": {
+      fileName: "neutrino-user-growth.csv",
+      rows: buildGrowthRows(state.playerHistory, "friday").map((row) => ({
+        player: row.name,
+        attempts: row.attempts,
+        first_week: row.firstWeekLabel,
+        latest_week: row.latestWeekLabel,
+        first_accuracy: decimalPercent(row.firstAccuracy),
+        latest_accuracy: decimalPercent(row.latestAccuracy),
+        best_accuracy: decimalPercent(row.bestAccuracy),
+        accuracy_growth: decimalPercent(row.accuracyGrowth),
+        first_correct: row.firstCorrect,
+        latest_correct: row.latestCorrect,
+        best_correct: row.bestCorrect,
+        latest_coins: row.latestCoins,
+      })),
+    },
+    "weekly-growth": {
+      fileName: "neutrino-weekly-growth.csv",
+      rows: buildFridayWeeklyTrendRows(state.playerHistory).map((row) => ({
+        player: row.name,
+        cycle_start: row.cycleStart,
+        week: row.weekLabel,
+        total_correct: row.totalCorrect,
+        total_questions: row.totalQuestions,
+        total_accuracy: decimalPercent(row.totalAccuracy),
+        final_coins: row.finalCoins,
+        completed_at: row.completedAt,
+      })),
+    },
+    "quiz-user-summary": {
+      fileName: "neutrino-quiz-user-summary.csv",
+      rows: buildQuizSummaryRows(state.quizPlayers).map((row) => ({
+        player: row.name,
+        total_correct: row.totalCorrect,
+        total_questions: row.totalQuestions,
+        total_accuracy: decimalPercent(row.totalAccuracy),
+        average_response_seconds: row.averageResponseSeconds,
+        average_clip_time_at_pick_seconds: row.averageClipTimeAtChoiceSeconds,
+        after_half_rate: decimalPercent(row.afterHalfRate),
+        completed_at: row.completedAt,
+      })),
+    },
+    "quiz-answer-detail": {
+      fileName: "neutrino-quiz-answer-detail.csv",
+      rows: buildQuizAnswerRows(state.quizPlayers).map((row) => ({
+        player: row.name,
+        video: row.videoLabel,
+        choice: row.choice,
+        correct_answer: row.expectedChoice,
+        correct: row.correct,
+        response_seconds: row.responseSeconds,
+        clip_time_at_pick_seconds: row.videoCurrentTimeSeconds,
+        completed_at: row.completedAt,
+      })),
+    },
+    "quiz-growth": {
+      fileName: "neutrino-quiz-growth.csv",
+      rows: buildGrowthRows(state.quizHistory, "quiz").map((row) => ({
+        player: row.name,
+        attempts: row.attempts,
+        total_questions: row.totalQuestions,
+        first_correct: row.firstCorrect,
+        latest_correct: row.latestCorrect,
+        best_correct: row.bestCorrect,
+        first_accuracy: decimalPercent(row.firstAccuracy),
+        latest_accuracy: decimalPercent(row.latestAccuracy),
+        best_accuracy: decimalPercent(row.bestAccuracy),
+        accuracy_growth: decimalPercent(row.accuracyGrowth),
+      })),
+    },
+    "event-summary": {
+      fileName: "neutrino-event-summary.csv",
+      rows: buildEventSummaryRows(state.analyticsSummary).map((row) => ({
+        event_type: row.eventType,
+        count: row.count,
+      })),
+    },
+    "recent-events": {
+      fileName: "neutrino-recent-events.csv",
+      rows: buildRecentEventRows(state.recentAnalyticsEvents).map((row) => ({
+        timestamp: row.timestamp,
+        mode: row.mode,
+        event_type: row.type,
+        player: row.nameKey,
+        run_id: row.runId,
+        video: row.videoRef,
+        detail: row.detail,
       })),
     },
   };
@@ -2032,6 +3539,12 @@ function formatPercent(value) {
   return `${Math.round(value * 100)}%`;
 }
 
+function formatSignedPercent(value) {
+  const numericValue = typeof value === "number" ? value : 0;
+  const percent = Math.round(numericValue * 100);
+  return `${percent > 0 ? "+" : ""}${percent}%`;
+}
+
 function formatDetailedPercent(value) {
   return typeof value === "number" ? `${(value * 100).toFixed(1)}%` : "n/a";
 }
@@ -2084,6 +3597,53 @@ function normalizeName(value) {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function simplifyVideoRef(value) {
+  if (!value) {
+    return null;
+  }
+
+  const stringValue = `${value}`;
+  const normalizedValue = stringValue.split("/").slice(-2).join("/");
+
+  try {
+    return decodeURIComponent(normalizedValue);
+  } catch (error) {
+    return normalizedValue;
+  }
+}
+
+function buildEventDetail(event) {
+  const detailParts = [];
+
+  if (event.nextChoice) {
+    detailParts.push(`${event.previousChoice || "none"} -> ${event.nextChoice}`);
+  } else if (event.choice) {
+    detailParts.push(`choice ${event.choice}`);
+  }
+
+  if (typeof event.currentTimeSeconds === "number") {
+    detailParts.push(`at ${event.currentTimeSeconds.toFixed(2)}s`);
+  }
+
+  if (typeof event.responseSeconds === "number") {
+    detailParts.push(`responded in ${event.responseSeconds.toFixed(2)}s`);
+  }
+
+  if (typeof event.totalCorrect === "number" && typeof event.totalQuestions === "number") {
+    detailParts.push(`score ${event.totalCorrect}/${event.totalQuestions}`);
+  }
+
+  if (typeof event.finalCoins === "number") {
+    detailParts.push(`coins ${event.finalCoins}`);
+  }
+
+  if (event.visibilityState) {
+    detailParts.push(`visibility ${event.visibilityState}`);
+  }
+
+  return detailParts.join(" • ") || "n/a";
+}
+
 function escapeHtml(value) {
   return `${value ?? ""}`
     .replace(/&/g, "&amp;")
@@ -2091,6 +3651,21 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function normalizeStoredRun(run) {
+  if (!run || typeof run !== "object") {
+    return null;
+  }
+
+  return {
+    ...run,
+    mode: run.mode === "quiz" ? "quiz" : "friday",
+  };
+}
+
+function createSessionId() {
+  return `session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function loadStorage(key, fallbackValue) {
@@ -2121,6 +3696,17 @@ function roundSeconds(value) {
 
 function roundRatio(value) {
   return Number(value.toFixed(4));
+}
+
+function shuffleList(list) {
+  const nextList = [...list];
+
+  for (let index = nextList.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [nextList[index], nextList[swapIndex]] = [nextList[swapIndex], nextList[index]];
+  }
+
+  return nextList;
 }
 
 function averageOfValues(values) {
