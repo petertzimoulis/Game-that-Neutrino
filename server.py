@@ -19,6 +19,7 @@ ROOT_DIR = Path(__file__).resolve().parent
 DATA_DIR = ROOT_DIR / "data"
 FRIDAY_DB_PATH = DATA_DIR / "shared_leaderboard.json"
 QUIZ_DB_PATH = DATA_DIR / "quiz_leaderboard.json"
+QUICK_QUIZ_DB_PATH = DATA_DIR / "quick_quiz_40.json"
 ANALYTICS_DB_PATH = DATA_DIR / "analytics_events.json"
 DB_LOCK = Lock()
 RUN_VIDEO_COUNT = 15
@@ -169,8 +170,8 @@ def load_friday_db() -> dict:
     }
 
 
-def load_quiz_db() -> dict:
-    loaded = load_db(QUIZ_DB_PATH, default_quiz_db)
+def load_quiz_db(path: Path = QUIZ_DB_PATH) -> dict:
+    loaded = load_db(path, default_quiz_db)
     players = loaded.get("players")
     history = loaded.get("history")
     updated_at = loaded.get("updatedAt")
@@ -245,8 +246,8 @@ def load_current_db() -> dict:
     return normalized_db
 
 
-def load_current_quiz_db() -> dict:
-    db = load_quiz_db()
+def load_current_quiz_db(path: Path = QUIZ_DB_PATH) -> dict:
+    db = load_quiz_db(path)
     normalized = {
         "players": db.get("players", []) if isinstance(db.get("players"), list) else [],
         "history": db.get("history", []) if isinstance(db.get("history"), list) else [],
@@ -257,7 +258,7 @@ def load_current_quiz_db() -> dict:
         normalized["history"] = sort_history(normalized["players"])
 
     if normalized != db:
-        save_db(QUIZ_DB_PATH, normalized)
+        save_db(path, normalized)
 
     return normalized
 
@@ -479,9 +480,11 @@ class SharedLeaderboardHandler(SimpleHTTPRequestHandler):
             self.respond_json(HTTPStatus.OK, serialize_db_payload(db))
             return
 
-        if parsed_path.path == "/api/quiz-players":
+        if parsed_path.path in {"/api/quiz-players", "/api/quick-quiz-players"}:
             with DB_LOCK:
-                db = load_current_quiz_db()
+                db = load_current_quiz_db(
+                    QUICK_QUIZ_DB_PATH if parsed_path.path == "/api/quick-quiz-players" else QUIZ_DB_PATH,
+                )
 
             self.respond_json(HTTPStatus.OK, serialize_quiz_db_payload(db))
             return
@@ -502,7 +505,7 @@ class SharedLeaderboardHandler(SimpleHTTPRequestHandler):
             self.handle_analytics_event_post()
             return
 
-        if parsed_path.path not in {"/api/players", "/api/quiz-players"}:
+        if parsed_path.path not in {"/api/players", "/api/quiz-players", "/api/quick-quiz-players"}:
             self.respond_json(
                 HTTPStatus.NOT_FOUND,
                 {"error": "Not found"},
@@ -524,8 +527,9 @@ class SharedLeaderboardHandler(SimpleHTTPRequestHandler):
 
         try:
             with DB_LOCK:
-                is_quiz = parsed_path.path == "/api/quiz-players"
-                db = load_current_quiz_db() if is_quiz else load_current_db()
+                is_quiz = parsed_path.path in {"/api/quiz-players", "/api/quick-quiz-players"}
+                quiz_db_path = QUICK_QUIZ_DB_PATH if parsed_path.path == "/api/quick-quiz-players" else QUIZ_DB_PATH
+                db = load_current_quiz_db(quiz_db_path) if is_quiz else load_current_db()
 
                 if not is_quiz:
                     requested_cycle_start = str(payload.get("cycleStart", "")).strip()
@@ -550,7 +554,7 @@ class SharedLeaderboardHandler(SimpleHTTPRequestHandler):
                     payload,
                 )
                 db["updatedAt"] = now_iso()
-                save_db(QUIZ_DB_PATH if is_quiz else FRIDAY_DB_PATH, db)
+                save_db(quiz_db_path if is_quiz else FRIDAY_DB_PATH, db)
         except ValueError as error:
             self.respond_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
             return
@@ -563,7 +567,7 @@ class SharedLeaderboardHandler(SimpleHTTPRequestHandler):
 
         self.respond_json(
             HTTPStatus.OK,
-            serialize_quiz_db_payload(db) if parsed_path.path == "/api/quiz-players" else serialize_db_payload(db),
+            serialize_quiz_db_payload(db) if parsed_path.path in {"/api/quiz-players", "/api/quick-quiz-players"} else serialize_db_payload(db),
         )
 
     def handle_analytics_event_post(self) -> None:

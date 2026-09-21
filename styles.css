@@ -1159,6 +1159,7 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.03);
   color: var(--text);
+  text-decoration: none;
 }
 
 .mode-toggle strong {
@@ -1184,6 +1185,104 @@ button {
 .quiz-review-card {
   display: grid;
   gap: 18px;
+}
+
+.quick-quiz-panel .game-panel-inner {
+  gap: 22px;
+}
+
+.quick-quiz-panel {
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.quick-quiz-panel .game-header {
+  align-items: center;
+  padding-bottom: 22px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.quick-quiz-stage {
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.55fr);
+  align-items: center;
+  gap: 28px;
+}
+
+.quick-quiz-decision {
+  align-self: stretch;
+  display: grid;
+  align-content: center;
+  gap: 18px;
+  min-height: 280px;
+  padding: 28px;
+  border: 1px solid rgba(124, 229, 216, 0.16);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(145deg, rgba(124, 229, 216, 0.08), rgba(255, 255, 255, 0.025));
+}
+
+.quick-quiz-choice-grid {
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.quick-quiz-choice-grid .choice-button {
+  min-height: 74px;
+  font-size: 1.12rem;
+}
+
+.quick-quiz-feedback-panel {
+  width: min(100%, 760px);
+  margin: clamp(24px, 6vh, 72px) auto;
+}
+
+.quick-quiz-feedback-panel .feedback-layout {
+  gap: 28px;
+  padding: clamp(24px, 4vw, 42px);
+  text-align: center;
+}
+
+.quick-quiz-feedback-panel .feedback-pill {
+  justify-content: center;
+  margin-top: 18px;
+}
+
+.quick-quiz-feedback-panel .button-row {
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.quick-quiz-stat-grid {
+  grid-template-columns: 1fr;
+  margin-top: 18px;
+}
+
+.quick-quiz-tag {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 12px;
+  padding: 7px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.quick-quiz-tag-pid-good {
+  color: var(--accent);
+  background: rgba(124, 229, 216, 0.14);
+  border-color: rgba(124, 229, 216, 0.3);
+}
+
+.quick-quiz-tag-pid-uncertain {
+  color: var(--gold);
+  background: rgba(241, 169, 55, 0.14);
+  border-color: rgba(241, 169, 55, 0.3);
+}
+
+.quick-quiz-tag-pid-bad {
+  color: var(--rose);
+  background: rgba(255, 142, 115, 0.13);
+  border-color: rgba(255, 142, 115, 0.3);
 }
 
 .quiz-stage {

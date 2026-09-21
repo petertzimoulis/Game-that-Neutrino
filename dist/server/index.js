@@ -10,145 +10,194 @@ const MANIFEST_SOURCES = [
   ["Group 4", "Group4Manifest.csv"],
 ];
 const GITHUB_API_ROOT = "https://api.github.com";
+const GITHUB_RAW_ROOT = "https://raw.githubusercontent.com";
 const REPOSITORY_OWNER = "petertzimoulis";
 const REPOSITORY_NAME = "Game-that-Neutrino";
 const REPOSITORY_BRANCH = "main";
 const FRIDAY_DB_PATH = "data/shared_leaderboard.json";
 const QUIZ_DB_PATH = "data/quiz_leaderboard.json";
+const QUICK_QUIZ_DB_PATH = "data/quick_quiz_40.json";
 const ANALYTICS_DB_PATH = "data/analytics_events.json";
+const GITHUB_API_HEADERS = {
+  Accept: "application/vnd.github+json",
+  "User-Agent": "game-that-neutrino-sites-worker",
+  "X-GitHub-Api-Version": "2022-11-28",
+};
 
 let catalogVideoIdsPromise = null;
 
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
+    try {
+      const url = new URL(request.url);
 
-    if (request.method === "OPTIONS") {
-      return withCors(new Response(null, { status: 204 }));
-    }
+      if (request.method === "OPTIONS") {
+        return withCors(new Response(null, { status: 204 }));
+      }
 
-    if (url.pathname === "/api/health") {
-      const db = await loadCurrentFridayDb(env, request);
-      return jsonResponse({
-        status: "ok",
-        ...serializeFridayPayload(db, await loadCatalogVideoIds(env, request)),
-      });
-    }
-
-    if (url.pathname === "/api/players") {
-      if (request.method === "GET") {
+      if (url.pathname === "/api/health") {
         const db = await loadCurrentFridayDb(env, request);
         return jsonResponse(
-          serializeFridayPayload(db, await loadCatalogVideoIds(env, request)),
+          {
+            status: "ok",
+            ...serializeFridayPayload(db, await loadCatalogVideoIds(env, request)),
+          },
         );
       }
 
-      if (request.method === "POST") {
-        const payload = await parseJsonBody(request);
-        const catalogVideoIds = await loadCatalogVideoIds(env, request);
+      if (url.pathname === "/api/players") {
+        if (request.method === "GET") {
+          const db = await loadCurrentFridayDb(env, request);
+          return jsonResponse(
+            serializeFridayPayload(db, await loadCatalogVideoIds(env, request)),
+          );
+        }
 
-        const responsePayload = await updateJsonFile(env, FRIDAY_DB_PATH, defaultFridayDb(), async (db) => {
-          const normalizedDb = normalizeFridayDb(db, catalogVideoIds);
-          const requestedCycleStart = `${payload?.cycleStart || ""}`.trim();
+        if (request.method === "POST") {
+          const payload = await parseJsonBody(request);
+          const catalogVideoIds = await loadCatalogVideoIds(env, request);
 
-          if (
-            requestedCycleStart &&
-            requestedCycleStart !== normalizedDb.activeCycleStart
-          ) {
-            return {
-              status: 409,
-              body: {
-                error: "Weekly lineup changed. Start a fresh run for the current Friday slate.",
-                ...serializeFridayPayload(normalizedDb, catalogVideoIds),
-              },
-              skipWrite: true,
+          const responsePayload = await updateJsonFile(env, FRIDAY_DB_PATH, defaultFridayDb(), async (db) => {
+            const normalizedDb = normalizeFridayDb(db, catalogVideoIds);
+            const requestedCycleStart = `${payload?.cycleStart || ""}`.trim();
+
+            if (
+              requestedCycleStart &&
+              requestedCycleStart !== normalizedDb.activeCycleStart
+            ) {
+              return {
+                status: 409,
+                body: {
+                  error: "Weekly lineup changed. Start a fresh run for the current Friday slate.",
+                  ...serializeFridayPayload(normalizedDb, catalogVideoIds),
+                },
+                skipWrite: true,
+              };
+            }
+
+            const updatedDb = {
+              ...normalizedDb,
+              players: upsertPlayer(normalizedDb.players, payload, "friday"),
+              history: upsertHistoryRecord(normalizedDb.history, payload),
+              updatedAt: nowIso(),
             };
-          }
 
-          const updatedDb = {
-            ...normalizedDb,
-            players: upsertPlayer(normalizedDb.players, payload, "friday"),
-            history: upsertHistoryRecord(normalizedDb.history, payload),
-            updatedAt: nowIso(),
-          };
+            return {
+              status: 200,
+              body: serializeFridayPayload(updatedDb, catalogVideoIds),
+              nextDb: updatedDb,
+            };
+          });
 
-          return {
-            status: 200,
-            body: serializeFridayPayload(updatedDb, catalogVideoIds),
-            nextDb: updatedDb,
-          };
-        });
-
-        return jsonResponse(responsePayload.body, responsePayload.status);
-      }
-    }
-
-    if (url.pathname === "/api/quiz-players") {
-      if (request.method === "GET") {
-        const db = await loadCurrentQuizDb(env);
-        return jsonResponse(
-          serializeQuizPayload(db, await loadCatalogVideoIds(env, request)),
-        );
+          return jsonResponse(responsePayload.body, responsePayload.status);
+        }
       }
 
-      if (request.method === "POST") {
+      if (url.pathname === "/api/quiz-players") {
+        if (request.method === "GET") {
+          const db = await loadCurrentQuizDb(env);
+          return jsonResponse(
+            serializeQuizPayload(db, await loadCatalogVideoIds(env, request)),
+          );
+        }
+
+        if (request.method === "POST") {
+          const payload = await parseJsonBody(request);
+          const responsePayload = await updateJsonFile(env, QUIZ_DB_PATH, defaultQuizDb(), async (db) => {
+            const normalizedDb = normalizeQuizDb(db);
+            const updatedDb = {
+              ...normalizedDb,
+              players: upsertPlayer(normalizedDb.players, payload, "quiz"),
+              history: upsertHistoryRecord(normalizedDb.history, payload),
+              updatedAt: nowIso(),
+            };
+
+            return {
+              status: 200,
+              body: serializeQuizPayload(updatedDb, await loadCatalogVideoIds(env, request)),
+              nextDb: updatedDb,
+            };
+          });
+
+          return jsonResponse(responsePayload.body, responsePayload.status);
+        }
+      }
+
+      if (url.pathname === "/api/quick-quiz-players") {
+        if (request.method === "GET") {
+          const db = await loadCurrentQuizDb(env, QUICK_QUIZ_DB_PATH);
+          return jsonResponse(
+            serializeQuizPayload(db, await loadCatalogVideoIds(env, request), "quick"),
+          );
+        }
+
+        if (request.method === "POST") {
+          const payload = await parseJsonBody(request);
+          const responsePayload = await updateJsonFile(env, QUICK_QUIZ_DB_PATH, defaultQuizDb(), async (db) => {
+            const normalizedDb = normalizeQuizDb(db);
+            const updatedDb = {
+              ...normalizedDb,
+              players: upsertPlayer(normalizedDb.players, payload, "quick"),
+              history: upsertHistoryRecord(normalizedDb.history, payload),
+              updatedAt: nowIso(),
+            };
+
+            return {
+              status: 200,
+              body: serializeQuizPayload(updatedDb, await loadCatalogVideoIds(env, request), "quick"),
+              nextDb: updatedDb,
+            };
+          });
+
+          return jsonResponse(responsePayload.body, responsePayload.status);
+        }
+      }
+
+      if (url.pathname === "/api/analytics") {
+        const db = await loadCurrentAnalyticsDb(env);
+        return jsonResponse(serializeAnalyticsPayload(db));
+      }
+
+      if (url.pathname === "/api/analytics-events" && request.method === "POST") {
         const payload = await parseJsonBody(request);
-        const responsePayload = await updateJsonFile(env, QUIZ_DB_PATH, defaultQuizDb(), async (db) => {
-          const normalizedDb = normalizeQuizDb(db);
-          const updatedDb = {
-            ...normalizedDb,
-            players: upsertPlayer(normalizedDb.players, payload, "quiz"),
-            history: upsertHistoryRecord(normalizedDb.history, payload),
-            updatedAt: nowIso(),
-          };
 
-          return {
-            status: 200,
-            body: serializeQuizPayload(updatedDb, await loadCatalogVideoIds(env, request)),
-            nextDb: updatedDb,
-          };
-        });
+        if (!Array.isArray(payload?.events)) {
+          return jsonResponse({ error: "Expected events array" }, 400);
+        }
+
+        const responsePayload = await updateJsonFile(
+          env,
+          ANALYTICS_DB_PATH,
+          defaultAnalyticsDb(),
+          async (db) => {
+            const normalizedDb = normalizeAnalyticsDb(db);
+            const updatedDb = {
+              ...normalizedDb,
+              events: appendAnalyticsEvents(normalizedDb.events, payload.events),
+              updatedAt: nowIso(),
+            };
+
+            return {
+              status: 200,
+              body: serializeAnalyticsPayload(updatedDb),
+              nextDb: updatedDb,
+            };
+          },
+        );
 
         return jsonResponse(responsePayload.body, responsePayload.status);
       }
-    }
 
-    if (url.pathname === "/api/analytics") {
-      const db = await loadCurrentAnalyticsDb(env);
-      return jsonResponse(serializeAnalyticsPayload(db));
-    }
-
-    if (url.pathname === "/api/analytics-events" && request.method === "POST") {
-      const payload = await parseJsonBody(request);
-
-      if (!Array.isArray(payload?.events)) {
-        return jsonResponse({ error: "Expected events array" }, 400);
-      }
-
-      const responsePayload = await updateJsonFile(
-        env,
-        ANALYTICS_DB_PATH,
-        defaultAnalyticsDb(),
-        async (db) => {
-          const normalizedDb = normalizeAnalyticsDb(db);
-          const updatedDb = {
-            ...normalizedDb,
-            events: appendAnalyticsEvents(normalizedDb.events, payload.events),
-            updatedAt: nowIso(),
-          };
-
-          return {
-            status: 200,
-            body: serializeAnalyticsPayload(updatedDb),
-            nextDb: updatedDb,
-          };
+      return fetchRepositoryAsset(request, url.pathname);
+    } catch (error) {
+      const status = error instanceof HttpError ? error.status : 500;
+      return jsonResponse(
+        {
+          error: error instanceof Error ? error.message : "Unexpected server error",
         },
+        status,
       );
-
-      return jsonResponse(responsePayload.body, responsePayload.status);
     }
-
-    return env.ASSETS.fetch(request);
   },
 };
 
@@ -192,11 +241,10 @@ async function loadCatalogVideoIds(env, request) {
       const videoIds = [];
 
       for (const [folderName, manifestFile] of MANIFEST_SOURCES) {
-        const assetUrl = new URL(
+        const response = await fetchRepositoryAsset(
+          request,
           buildAssetPath("videos", folderName, manifestFile),
-          request.url,
         );
-        const response = await env.ASSETS.fetch(new Request(assetUrl.toString()));
 
         if (!response.ok) {
           throw new Error(`Failed to load manifest ${manifestFile}`);
@@ -284,6 +332,30 @@ function parseCsvLine(line) {
 
 function buildAssetPath(...segments) {
   return `/${segments.map((segment) => encodeURIComponent(segment)).join("/")}`;
+}
+
+function buildPackagedAssetPath(pathname) {
+  if (!pathname || pathname === "/") {
+    return "/index.html";
+  }
+
+  return pathname.startsWith("/") ? pathname : `/${pathname}`;
+}
+
+function buildRepositoryAssetUrl(pathname) {
+  return `${GITHUB_RAW_ROOT}/${REPOSITORY_OWNER}/${REPOSITORY_NAME}/${REPOSITORY_BRANCH}${buildPackagedAssetPath(pathname)}`;
+}
+
+function fetchRepositoryAsset(request, pathname) {
+  const assetUrl = buildRepositoryAssetUrl(pathname);
+  const accept = request.headers.get("accept");
+
+  return fetch(
+    new Request(assetUrl, {
+      method: "GET",
+      headers: accept ? { Accept: accept } : undefined,
+    }),
+  );
 }
 
 function nowIso() {
@@ -448,7 +520,7 @@ function isValidActiveVideoIds(activeVideoIds, catalogVideoIds) {
 }
 
 function sortPlayers(players, mode) {
-  if (mode === "quiz") {
+  if (mode === "quiz" || mode === "quick") {
     return [...players].sort((left, right) => {
       if ((right.totalCorrect || 0) !== (left.totalCorrect || 0)) {
         return (right.totalCorrect || 0) - (left.totalCorrect || 0);
@@ -573,9 +645,9 @@ function serializeFridayPayload(db, catalogVideoIds) {
   };
 }
 
-function serializeQuizPayload(db, catalogVideoIds) {
+function serializeQuizPayload(db, catalogVideoIds, mode = "quiz") {
   return {
-    players: sortPlayers(db.players || [], "quiz"),
+    players: sortPlayers(db.players || [], mode),
     history: sortHistory(db.history || []),
     updatedAt: db.updatedAt,
     catalogSize: catalogVideoIds.length,
@@ -635,40 +707,17 @@ function serializeAnalyticsPayload(db) {
 async function loadCurrentFridayDb(env, request) {
   const catalogVideoIds = await loadCatalogVideoIds(env, request);
   const db = await readJsonFile(env, FRIDAY_DB_PATH, defaultFridayDb());
-  const normalizedDb = normalizeFridayDb(db, catalogVideoIds);
-
-  if (JSON.stringify(normalizedDb) !== JSON.stringify(db)) {
-    await writeJsonFile(
-      env,
-      FRIDAY_DB_PATH,
-      normalizedDb,
-      "Normalize Friday leaderboard data",
-    );
-  }
-
-  return normalizedDb;
+  return normalizeFridayDb(db, catalogVideoIds);
 }
 
-async function loadCurrentQuizDb(env) {
-  const db = await readJsonFile(env, QUIZ_DB_PATH, defaultQuizDb());
-  const normalizedDb = normalizeQuizDb(db);
-
-  if (JSON.stringify(normalizedDb) !== JSON.stringify(db)) {
-    await writeJsonFile(env, QUIZ_DB_PATH, normalizedDb, "Normalize quiz leaderboard data");
-  }
-
-  return normalizedDb;
+async function loadCurrentQuizDb(env, path = QUIZ_DB_PATH) {
+  const db = await readJsonFile(env, path, defaultQuizDb());
+  return normalizeQuizDb(db);
 }
 
 async function loadCurrentAnalyticsDb(env) {
   const db = await readJsonFile(env, ANALYTICS_DB_PATH, defaultAnalyticsDb());
-  const normalizedDb = normalizeAnalyticsDb(db);
-
-  if (JSON.stringify(normalizedDb) !== JSON.stringify(db)) {
-    await writeJsonFile(env, ANALYTICS_DB_PATH, normalizedDb, "Normalize analytics data");
-  }
-
-  return normalizedDb;
+  return normalizeAnalyticsDb(db);
 }
 
 async function updateJsonFile(env, path, defaultValue, updater, attempt = 0) {
@@ -702,18 +751,16 @@ async function readJsonFile(env, path, defaultValue) {
 
 async function readJsonFileWithSha(env, path, defaultValue) {
   const token = env.GITHUB_TOKEN;
+  const headers = { ...GITHUB_API_HEADERS };
 
-  if (!token) {
-    throw new HttpError(500, "Missing GITHUB_TOKEN");
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
   }
 
   const response = await fetch(
     `${GITHUB_API_ROOT}/repos/${REPOSITORY_OWNER}/${REPOSITORY_NAME}/contents/${path}?ref=${REPOSITORY_BRANCH}`,
     {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-      },
+      headers,
     },
   );
 
@@ -760,8 +807,8 @@ async function writeJsonFile(env, path, data, message, sha = undefined) {
     {
       method: "PUT",
       headers: {
+        ...GITHUB_API_HEADERS,
         Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
@@ -769,7 +816,18 @@ async function writeJsonFile(env, path, data, message, sha = undefined) {
   );
 
   if (!response.ok) {
-    throw new HttpError(response.status, `Failed to write ${path}`);
+    let details = "";
+
+    try {
+      const payload = await response.json();
+      details = typeof payload?.message === "string" && payload.message
+        ? `: ${payload.message}`
+        : "";
+    } catch (error) {
+      details = "";
+    }
+
+    throw new HttpError(response.status, `Failed to write ${path}${details}`);
   }
 }
 
