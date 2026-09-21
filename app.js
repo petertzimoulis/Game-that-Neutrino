@@ -784,23 +784,18 @@ function renderQuickQuizLandingContent({ leaderboard, hasLeaderboard }) {
         Each answer is saved with your name for your personal statistics and exports.
       </p>
 
-      <p class="subtle-copy">
-        The 21 videos are randomized: 7 where PID did well, 7 where it was uncertain, and 7 where it did poorly.
-        Correct answers appear after video 21.
-      </p>
-
       <div class="feature-strip">
         <div class="feature-chip">
           <strong>21 Videos</strong>
           <span>All 21 supplied low-energy videos appear once in every quiz.</span>
         </div>
         <div class="feature-chip">
-          <strong>3 Tagged Groups</strong>
-          <span>Each group contains 7 randomized Track and Cascade examples, tagged by PID performance.</span>
+          <strong>One at a time</strong>
+          <span>Every video is presented individually in a randomized order.</span>
         </div>
         <div class="feature-chip">
           <strong>Personal Data</strong>
-          <span>Your answers, accuracy, response time, and tag results are saved separately.</span>
+          <span>Your answers, accuracy, and response time are saved separately.</span>
         </div>
       </div>
 
@@ -881,7 +876,6 @@ function renderQuickQuizQuestionView(run) {
   const video = getVideoForRunIndex(run, run.currentIndex);
   const completedCount = run.answers.length;
   const questionNumber = run.currentIndex + 1;
-  const group = getQuickQuizGroup(run, video?.id);
 
   if (!video) {
     return renderCatalogStateView({
@@ -897,7 +891,6 @@ function renderQuickQuizQuestionView(run) {
           <div class="game-heading-block">
             <p class="eyebrow">4.0 Quick Quiz</p>
             <h2 class="hero-title">Video ${questionNumber} of ${getRunVideoCount(run)}</h2>
-            <span class="quick-quiz-tag quick-quiz-tag-${group.id}">${group.label}</span>
           </div>
 
           <div class="status-strip status-strip-compact">
@@ -1145,7 +1138,6 @@ function renderLearningQuizResultsView(run) {
 
 function renderQuickQuizResultsView(run) {
   const stats = calculateRunStats(run.answers, "quick");
-  const groupStats = getQuickQuizGroupStats(run.answers);
 
   return `
     <section class="results-layout appear">
@@ -1192,13 +1184,6 @@ function renderQuickQuizResultsView(run) {
             </div>
           </div>
 
-          <div class="mini-card-grid quick-quiz-group-stats">
-            ${QUICK_QUIZ_GROUPS.map((group) => {
-              const summary = groupStats[group.id];
-              return `<div class="mini-card"><span>${group.label}</span><strong>${summary.correct} / ${summary.total}</strong><p>${formatPercent(summary.accuracy)} accuracy in this tagged group.</p></div>`;
-            }).join("")}
-          </div>
-
           <div class="button-row">
             <button type="button" class="primary-button" data-action="play-again">Start another 4.0 quiz</button>
             <button type="button" class="secondary-button" data-action="open-analysis">Open 4.0 exports</button>
@@ -1235,7 +1220,6 @@ function renderQuizReviewCard(answer) {
         <div>
           <p class="eyebrow">${escapeHtml(answer.videoLabel)}</p>
           <h3 class="card-title">${escapeHtml(answer.sourceGroup)}</h3>
-          ${answer.categoryLabel ? `<span class="quick-quiz-tag quick-quiz-tag-${answer.categoryId}">${escapeHtml(answer.categoryLabel)}</span>` : ""}
         </div>
         <span class="quiz-review-pill ${answer.correct ? "is-correct" : "is-wrong"}">${answerState}</span>
       </div>
