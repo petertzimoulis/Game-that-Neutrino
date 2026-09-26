@@ -967,6 +967,7 @@ function renderQuickQuizFeedbackView(run) {
   const answer = run.answers[run.answers.length - 1];
   const isFinalQuestion = answer.questionNumber === getRunVideoCount(run);
   const coinDelta = answer.coinsAfter - answer.coinsBefore;
+  const hotStreakStarted = answer.correct && answer.streakAfter === 2;
 
   return `
     <section class="panel appear quick-quiz-feedback-panel">
@@ -979,6 +980,21 @@ function renderQuickQuizFeedbackView(run) {
             <span>You chose ${titleCase(answer.choice)}.</span>
           </div>
         </div>
+
+        ${
+          hotStreakStarted
+            ? `
+              <div class="hot-streak-celebration" role="status" aria-live="polite">
+                <span class="hot-streak-sparks" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+                <div>
+                  <p class="eyebrow">Hot Streak</p>
+                  <strong>Two correct calls in a row.</strong>
+                  <span>Your next correct call can earn the hot-hand bonus.</span>
+                </div>
+              </div>
+            `
+            : ""
+        }
 
         <div class="feedback-grid">
           <div class="feedback-card"><span>Coin movement</span><strong>${coinDelta > 0 ? "+" : ""}${coinDelta} coins</strong><p>Your bank is now ${answer.coinsAfter} coins.</p></div>

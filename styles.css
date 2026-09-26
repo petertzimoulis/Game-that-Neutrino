@@ -1355,6 +1355,81 @@ button {
   margin-top: 18px;
 }
 
+.hot-streak-celebration {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  overflow: hidden;
+  padding: 18px 22px;
+  border: 1px solid rgba(241, 169, 55, 0.56);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 217, 135, 0.35), transparent 46%),
+    linear-gradient(135deg, rgba(241, 169, 55, 0.24), rgba(255, 142, 115, 0.15));
+  box-shadow: 0 12px 34px rgba(241, 169, 55, 0.18);
+  animation: hot-streak-pop 520ms cubic-bezier(0.2, 1.25, 0.45, 1) both;
+}
+
+.hot-streak-celebration > div {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+
+.hot-streak-celebration .eyebrow {
+  color: #ffe4a6;
+}
+
+.hot-streak-celebration strong {
+  font-size: 1.18rem;
+}
+
+.hot-streak-celebration > div > span {
+  color: var(--text);
+  font-size: 0.92rem;
+}
+
+.hot-streak-sparks {
+  position: relative;
+  display: block;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+}
+
+.hot-streak-sparks::before {
+  content: "✦";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff0bb;
+  font-size: 2.35rem;
+  text-shadow: 0 0 16px rgba(255, 217, 135, 0.86);
+  animation: hot-streak-core 900ms ease-in-out infinite alternate;
+}
+
+.hot-streak-sparks i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #ffd987;
+  box-shadow: 0 0 10px rgba(255, 217, 135, 0.94);
+  animation: hot-streak-spark 720ms ease-out both;
+}
+
+.hot-streak-sparks i:nth-child(1) { --spark-x: -20px; --spark-y: -18px; animation-delay: 70ms; }
+.hot-streak-sparks i:nth-child(2) { --spark-x: 19px; --spark-y: -15px; animation-delay: 115ms; }
+.hot-streak-sparks i:nth-child(3) { --spark-x: 23px; --spark-y: 14px; animation-delay: 40ms; }
+.hot-streak-sparks i:nth-child(4) { --spark-x: -18px; --spark-y: 19px; animation-delay: 145ms; }
+.hot-streak-sparks i:nth-child(5) { --spark-x: 0; --spark-y: -27px; animation-delay: 10ms; }
+
 .quick-quiz-feedback-panel .button-row {
   justify-content: center;
   margin-top: 4px;
@@ -1729,6 +1804,22 @@ button {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+@keyframes hot-streak-pop {
+  0% { opacity: 0; transform: scale(0.9) translateY(12px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes hot-streak-core {
+  from { transform: scale(0.88) rotate(-8deg); }
+  to { transform: scale(1.12) rotate(8deg); }
+}
+
+@keyframes hot-streak-spark {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.25); }
+  35% { opacity: 1; }
+  100% { opacity: 0; transform: translate(calc(-50% + var(--spark-x)), calc(-50% + var(--spark-y))) scale(0.75); }
 }
 
 .noscript-banner {
