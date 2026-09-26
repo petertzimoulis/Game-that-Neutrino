@@ -1877,10 +1877,12 @@ function renderQuizAnalysisModal() {
 }
 
 function renderQuickQuizAnalysisModal() {
-  const summaryRows = buildQuizSummaryRows(state.quickQuizPlayers);
-  const detailRows = buildQuizAnswerRows(state.quickQuizHistory);
-  const groupRows = buildQuickQuizGroupRows(state.quickQuizHistory);
-  const growthRows = buildGrowthRows(state.quickQuizHistory, "quick");
+  const reportPlayers = getQuickQuizReportRecords(state.quickQuizPlayers);
+  const reportHistory = getQuickQuizReportRecords(state.quickQuizHistory);
+  const summaryRows = buildQuizSummaryRows(reportPlayers);
+  const detailRows = buildQuizAnswerRows(reportHistory);
+  const groupRows = buildQuickQuizGroupRows(reportHistory);
+  const growthRows = buildGrowthRows(reportHistory, "quick");
   const eventSummaryRows = buildEventSummaryRows(state.analyticsSummary);
   const recentEventRows = buildRecentEventRows(state.recentAnalyticsEvents);
   const averageAccuracy = summaryRows.length
@@ -1905,7 +1907,7 @@ function renderQuickQuizAnalysisModal() {
             </div>
             <div class="summary-card">
               <span>Total attempts</span>
-              <strong>${state.quickQuizHistory.length}</strong>
+              <strong>${reportHistory.length}</strong>
               <p>Every 4.0 attempt is preserved so improvement can be tracked over time.</p>
             </div>
             <div class="summary-card">
@@ -3612,22 +3614,7 @@ function getPlayerSectionStat(player, sectionId) {
 }
 
 function getSeededLineCounts(videoId) {
-  const configuredCounts = SEEDED_PUBLIC_LINE_COUNTS[videoId];
-
-  if (configuredCounts) {
-    return configuredCounts;
-  }
-
-  const baseline = QUICK_QUIZ_BASELINE_RESULTS[extractEventId(videoId)];
-  const expectedChoice = getExpectedChoice(videoId);
-
-  if (baseline && expectedChoice) {
-    return expectedChoice === "track"
-      ? { trackCount: baseline.correct, cascadeCount: baseline.total - baseline.correct }
-      : { trackCount: baseline.total - baseline.correct, cascadeCount: baseline.correct };
-  }
-
-  return {
+  return SEEDED_PUBLIC_LINE_COUNTS[videoId] || {
     trackCount: 0,
     cascadeCount: 0,
   };
@@ -3776,6 +3763,10 @@ function getPlayersForMode(mode) {
     : mode === "quick"
       ? state.quickQuizPlayers
       : state.players;
+}
+
+function getQuickQuizReportRecords(records) {
+  return records.filter((record) => !record.isSeedData);
 }
 
 function getActiveMode() {
@@ -4185,7 +4176,7 @@ function downloadCsv(report) {
     },
     "quick-quiz-pid-groups": {
       fileName: "4.0-quick-quiz-pid-groups.csv",
-      rows: buildQuickQuizGroupRows(state.quickQuizHistory).map((row) => ({
+      rows: buildQuickQuizGroupRows(getQuickQuizReportRecords(state.quickQuizHistory)).map((row) => ({
         player: row.name,
         result_set: row.groupLabel,
         correct: row.correct,
@@ -4196,7 +4187,7 @@ function downloadCsv(report) {
     },
     "quick-quiz-user-summary": {
       fileName: "4.0-quick-quiz-user-summary.csv",
-      rows: buildQuizSummaryRows(state.quickQuizPlayers).map((row) => ({
+      rows: buildQuizSummaryRows(getQuickQuizReportRecords(state.quickQuizPlayers)).map((row) => ({
         player: row.name,
         total_correct: row.totalCorrect,
         total_questions: row.totalQuestions,
@@ -4209,7 +4200,7 @@ function downloadCsv(report) {
     },
     "quick-quiz-answer-detail": {
       fileName: "4.0-quick-quiz-answer-detail.csv",
-      rows: buildQuizAnswerRows(state.quickQuizHistory).map((row) => ({
+      rows: buildQuizAnswerRows(getQuickQuizReportRecords(state.quickQuizHistory)).map((row) => ({
         player: row.name,
         video: row.videoLabel,
         pid_group: row.category,
@@ -4224,7 +4215,7 @@ function downloadCsv(report) {
     },
     "quick-quiz-growth": {
       fileName: "4.0-quick-quiz-growth.csv",
-      rows: buildGrowthRows(state.quickQuizHistory, "quick").map((row) => ({
+      rows: buildGrowthRows(getQuickQuizReportRecords(state.quickQuizHistory), "quick").map((row) => ({
         player: row.name,
         attempts: row.attempts,
         total_questions: row.totalQuestions,

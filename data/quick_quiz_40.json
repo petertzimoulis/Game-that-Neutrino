@@ -3,6 +3,7 @@
     {
       "id": "quick-quiz-seed-willem-20260922",
       "mode": "quick",
+      "isSeedData": true,
       "name": "Willem",
       "nameKey": "willem",
       "startedAt": "2026-09-22T10:35:06-04:00",
@@ -17,6 +18,7 @@
     {
       "id": "quick-quiz-seed-william-zheng-20260924",
       "mode": "quick",
+      "isSeedData": true,
       "name": "William Zheng",
       "nameKey": "william-zheng",
       "startedAt": "2026-09-24T11:11:36-04:00",
@@ -31,6 +33,7 @@
     {
       "id": "quick-quiz-seed-alexander-seniw-20260924",
       "mode": "quick",
+      "isSeedData": true,
       "name": "Alexander Seniw",
       "nameKey": "alexander-seniw",
       "startedAt": "2026-09-24T13:47:10-04:00",
@@ -45,6 +48,7 @@
     {
       "id": "quick-quiz-seed-jj-20260924",
       "mode": "quick",
+      "isSeedData": true,
       "name": "JJ :)",
       "nameKey": "jj",
       "startedAt": "2026-09-24T16:31:51-04:00",
@@ -59,6 +63,7 @@
     {
       "id": "quick-quiz-seed-angelina-20260925",
       "mode": "quick",
+      "isSeedData": true,
       "name": "Angelina",
       "nameKey": "angelina",
       "startedAt": "2026-09-25T00:32:53-04:00",
@@ -647,6 +652,7 @@
     {
       "id": "quick-quiz-seed-willem-20260922",
       "mode": "quick",
+      "isSeedData": true,
       "name": "Willem",
       "nameKey": "willem",
       "startedAt": "2026-09-22T10:35:06-04:00",
@@ -661,6 +667,7 @@
     {
       "id": "quick-quiz-seed-william-zheng-20260924",
       "mode": "quick",
+      "isSeedData": true,
       "name": "William Zheng",
       "nameKey": "william-zheng",
       "startedAt": "2026-09-24T11:11:36-04:00",
@@ -675,6 +682,7 @@
     {
       "id": "quick-quiz-seed-alexander-seniw-20260924",
       "mode": "quick",
+      "isSeedData": true,
       "name": "Alexander Seniw",
       "nameKey": "alexander-seniw",
       "startedAt": "2026-09-24T13:47:10-04:00",
@@ -689,6 +697,7 @@
     {
       "id": "quick-quiz-seed-jj-20260924",
       "mode": "quick",
+      "isSeedData": true,
       "name": "JJ :)",
       "nameKey": "jj",
       "startedAt": "2026-09-24T16:31:51-04:00",
@@ -703,6 +712,7 @@
     {
       "id": "quick-quiz-seed-angelina-20260925",
       "mode": "quick",
+      "isSeedData": true,
       "name": "Angelina",
       "nameKey": "angelina",
       "startedAt": "2026-09-25T00:32:53-04:00",
