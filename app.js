@@ -639,7 +639,7 @@ function renderLandingView() {
     });
 
   return `
-    <section class="welcome-layout appear">
+    <section class="welcome-layout appear ${activeMode === "quick" ? "quick-quiz-landing" : ""}">
       <article class="panel hero-card">
         <div class="panel-inner">
           <div class="mode-switcher">
@@ -968,7 +968,7 @@ function renderQuickQuizFeedbackView(run) {
   const coinDelta = answer.coinsAfter - answer.coinsBefore;
 
   return `
-    <section class="panel appear">
+    <section class="panel appear quick-quiz-feedback-panel">
       <div class="panel-inner feedback-layout">
         <div>
           <p class="eyebrow">4.0 • Video ${answer.questionNumber} of ${getRunVideoCount(run)}</p>
@@ -1193,7 +1193,7 @@ function renderQuickQuizResultsView(run) {
   const stats = calculateRunStats(run.answers, "quick");
 
   return `
-    <section class="results-layout appear">
+    <section class="results-layout appear quick-quiz-results">
       <article class="panel">
         <div class="panel-inner score-panel">
           <div class="score-shell">
