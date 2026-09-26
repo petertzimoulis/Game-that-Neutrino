@@ -1233,32 +1233,21 @@ button {
 
 .quick-quiz-landing .leaderboard-table {
   min-width: 0;
-  table-layout: fixed;
+  table-layout: auto;
 }
 
 .quick-quiz-landing .leaderboard-table th,
 .quick-quiz-landing .leaderboard-table td {
-  padding: 13px 8px;
-}
-
-.quick-quiz-landing .leaderboard-table th:first-child,
-.quick-quiz-landing .leaderboard-table td:first-child {
-  width: 48px;
-}
-
-.quick-quiz-landing .leaderboard-table th:nth-child(3),
-.quick-quiz-landing .leaderboard-table td:nth-child(3) {
-  width: 70px;
-}
-
-.quick-quiz-landing .leaderboard-table th:nth-child(4),
-.quick-quiz-landing .leaderboard-table td:nth-child(4) {
-  width: 76px;
+  padding: 13px 10px;
 }
 
 .quick-quiz-landing .leaderboard-table th:last-child,
 .quick-quiz-landing .leaderboard-table td:last-child {
-  width: 104px;
+  display: none;
+}
+
+.quick-quiz-landing .leaderboard-table th {
+  white-space: nowrap;
 }
 
 .quick-quiz-panel {
