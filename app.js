@@ -1223,22 +1223,25 @@ function renderQuickQuizResultsView(run) {
               </p>
             </div>
 
-            <div class="score-stack">
-              <div class="score-badge score-badge-quiz">
-                <p class="score-value">${stats.totalCorrect} / ${stats.totalQuestions}</p>
+            <div class="quick-results-scoreboard">
+              <div class="quick-result-tile quick-result-coins">
+                <span>Final coin bank</span>
+                <strong><img class="coin-icon" src="${COIN_ICON_SRC}" alt="" aria-hidden="true" />${run.coins ?? 10}</strong>
               </div>
-              <p class="score-caption">${formatPercent(stats.totalAccuracy)} accuracy</p>
+              <div class="quick-result-tile quick-result-score">
+                <span>Quiz score</span>
+                <strong>${stats.totalCorrect} / ${stats.totalQuestions}</strong>
+                <p>${formatPercent(stats.totalAccuracy)} accuracy</p>
+              </div>
             </div>
           </div>
 
-          <div class="results-strip results-strip-quiz">
+          <div class="results-strip quick-results-details">
             <div class="summary-card">
-              <span>Total correct</span>
+              <span>Correct calls</span>
               <strong>${stats.totalCorrect}</strong>
               <p>${stats.totalQuestions - stats.totalCorrect} clips need another look.</p>
             </div>
-            <div class="summary-card"><span>Final coins</span><strong>${run.coins ?? 10}</strong><p>4.0 rankings use coin total, then accuracy.</p></div>
-            <div class="summary-card"><span>Accuracy</span><strong>${formatPercent(stats.totalAccuracy)}</strong><p>Correct calls and wagers stay in the 4.0 category only.</p></div>
             <div class="summary-card">
               <span>Track pool</span>
               <strong>${stats.sectionStats.track.correct} / ${stats.sectionStats.track.total}</strong>
@@ -1254,6 +1257,12 @@ function renderQuickQuizResultsView(run) {
           <div class="button-row">
             <button type="button" class="primary-button" data-action="play-again">Start another 4.0 quiz</button>
             <button type="button" class="secondary-button" data-action="open-analysis">Open 4.0 exports</button>
+          </div>
+
+          <div class="quick-review-heading">
+            <p class="eyebrow">Answer Review</p>
+            <h3 class="card-title">Replay each call</h3>
+            <p class="subtle-copy">Compare your choice with the answer key for every video in this run.</p>
           </div>
 
           <div class="quiz-review-grid">

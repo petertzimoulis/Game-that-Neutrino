@@ -1444,16 +1444,86 @@ button {
   gap: 28px;
 }
 
-.quick-quiz-results .results-strip {
+.quick-quiz-results .score-shell {
+  grid-template-columns: minmax(0, 1fr) minmax(310px, 0.72fr);
+  align-items: stretch;
+}
+
+.quick-results-scoreboard {
+  display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.quick-result-tile {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  min-height: 144px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.quick-result-tile > span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.quick-result-tile strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-size: clamp(1.7rem, 3vw, 2.35rem);
+  line-height: 1;
+}
+
+.quick-result-tile p {
+  margin: 0;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.quick-result-coins {
+  border-color: rgba(241, 169, 55, 0.4);
+  background: linear-gradient(145deg, rgba(241, 169, 55, 0.22), rgba(255, 255, 255, 0.045));
+}
+
+.quick-result-coins .coin-icon {
+  width: 30px;
+  height: 30px;
+}
+
+.quick-result-score {
+  border-color: rgba(124, 229, 216, 0.3);
+  background: linear-gradient(145deg, rgba(124, 229, 216, 0.14), rgba(255, 255, 255, 0.035));
+}
+
+.quick-results-details {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .quick-quiz-results .summary-card {
-  min-height: 132px;
+  min-height: 126px;
+}
+
+.quick-review-heading {
+  display: grid;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.quick-review-heading .subtle-copy {
+  margin: 0;
 }
 
 .quick-quiz-results .quiz-review-grid {
-  margin-top: 8px;
+  margin-top: -10px;
 }
 
 .quick-quiz-stat-grid {
@@ -1917,6 +1987,11 @@ button {
 
   .quick-quiz-results .results-strip,
   .quick-quiz-feedback-panel .feedback-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .quick-quiz-results .score-shell,
+  .quick-results-scoreboard {
     grid-template-columns: 1fr;
   }
 
