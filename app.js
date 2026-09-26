@@ -4024,13 +4024,24 @@ function getCombinedVideoLineStats(videoId, players) {
   const totalResponses = trackCount + cascadeCount;
   const liveCorrectCount = answers.filter((answer) => answer.correct).length;
   const seededCorrectCount = getSeededCorrectCount(videoId, seededCounts);
+  const unanimousSideVotes = Math.max(trackCount, cascadeCount);
+  const shouldHoldBackPerfectLine =
+    totalResponses > 0 &&
+    Math.min(trackCount, cascadeCount) === 0 &&
+    unanimousSideVotes < 3;
+  const rawTrackPercentage = totalResponses ? trackCount / totalResponses : 0.5;
+  const rawCascadePercentage = totalResponses ? cascadeCount / totalResponses : 0.5;
 
   return {
     trackCount,
     cascadeCount,
     totalResponses,
-    trackPercentage: totalResponses ? trackCount / totalResponses : 0.5,
-    cascadePercentage: totalResponses ? cascadeCount / totalResponses : 0.5,
+    trackPercentage: shouldHoldBackPerfectLine && rawTrackPercentage === 1
+      ? 0.99
+      : rawTrackPercentage,
+    cascadePercentage: shouldHoldBackPerfectLine && rawCascadePercentage === 1
+      ? 0.99
+      : rawCascadePercentage,
     accuracy: totalResponses
       ? (seededCorrectCount + liveCorrectCount) / totalResponses
       : 0,
