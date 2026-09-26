@@ -51,6 +51,7 @@ const QUIZ_CASCADE_COUNT = 5;
 const QUICK_QUIZ_VIDEO_COUNT = 21;
 const QUICK_QUIZ_GROUP_SIZE = 7;
 const QUICK_QUIZ_MIN_SUCCESS_RATE = 0.55;
+const QUICK_QUIZ_FIFTY_PERCENT_EVENT_IDS = new Set(["3101", "19202"]);
 const QUICK_QUIZ_GROUPS = [
   { id: "pid-good", label: "PID did well", description: "PID made a confident, correct classification." },
   { id: "pid-uncertain", label: "PID was uncertain", description: "PID was closest to the decision boundary." },
@@ -815,7 +816,7 @@ function renderQuickQuizLandingContent({ leaderboard, hasLeaderboard }) {
       <div class="feature-strip">
         <div class="feature-chip">
           <strong>${activeVideoCount} Videos</strong>
-          <span>Every run uses the clips that have cleared the 55% success threshold.</span>
+          <span>Every run uses eight high-performing clips plus two balanced 50% clips.</span>
         </div>
         <div class="feature-chip">
           <strong>Coin play</strong>
@@ -3684,8 +3685,10 @@ function buildQuickQuizRun() {
 
 function getQuickQuizVideoCount() {
   if (!ALL_VIDEOS.length) {
-    return Object.values(QUICK_QUIZ_BASELINE_RESULTS).filter(
-      ({ correct, total }) => correct / total >= QUICK_QUIZ_MIN_SUCCESS_RATE,
+    return Object.entries(QUICK_QUIZ_BASELINE_RESULTS).filter(
+      ([eventId, { correct, total }]) => {
+        return correct / total >= QUICK_QUIZ_MIN_SUCCESS_RATE || QUICK_QUIZ_FIFTY_PERCENT_EVENT_IDS.has(eventId);
+      },
     ).length;
   }
 
@@ -3695,8 +3698,14 @@ function getQuickQuizVideoCount() {
 }
 
 function isQuickQuizEligibleVideo(video) {
-  const baseline = QUICK_QUIZ_BASELINE_RESULTS[extractEventId(video.id)];
-  return Boolean(baseline && baseline.correct / baseline.total >= QUICK_QUIZ_MIN_SUCCESS_RATE);
+  const eventId = extractEventId(video.id);
+  const baseline = QUICK_QUIZ_BASELINE_RESULTS[eventId];
+  return Boolean(
+    baseline && (
+      baseline.correct / baseline.total >= QUICK_QUIZ_MIN_SUCCESS_RATE ||
+      QUICK_QUIZ_FIFTY_PERCENT_EVENT_IDS.has(eventId)
+    ),
+  );
 }
 
 function sampleBalancedQuickVideos(videos, count) {
