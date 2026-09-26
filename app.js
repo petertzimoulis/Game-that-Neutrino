@@ -42,7 +42,7 @@ const API_ANALYTICS_URL = "/api/analytics";
 const API_ANALYTICS_EVENTS_URL = "/api/analytics-events";
 const COIN_ICON_SRC = "coin.png";
 const VIDEO_PLAYBACK_RATE = 2;
-const PLAYER_SYNC_INTERVAL_MS = 15000;
+const PLAYER_SYNC_INTERVAL_MS = 60000;
 const ANALYTICS_FLUSH_INTERVAL_MS = 4000;
 const RUN_VIDEO_COUNT = 15;
 const QUIZ_VIDEO_COUNT = 10;
@@ -166,10 +166,13 @@ const state = {
   catalogError: null,
   scheduleLoaded: false,
   scheduleError: null,
+  fridayDataVersion: null,
   quizLeaderboardLoaded: false,
   quizLeaderboardError: null,
+  quizDataVersion: null,
   quickQuizLoaded: false,
   quickQuizError: null,
+  quickQuizDataVersion: null,
   activeCycleStart: null,
   activeCycleEnd: null,
   activeVideoIds: [],
@@ -2405,15 +2408,18 @@ async function syncPlayersFromServer() {
     }
 
     const payload = await response.json();
+    const dataVersion = typeof payload.updatedAt === "string" ? payload.updatedAt : null;
+    const dataChanged = !state.scheduleLoaded || state.fridayDataVersion !== dataVersion;
     applyFridayPayload(payload);
     state.scheduleLoaded = true;
     state.scheduleError = null;
+    state.fridayDataVersion = dataVersion;
     applyWeeklyVideoSelection();
     const runBecameInvalid = Boolean(
       state.currentRun && !isCurrentRunCompatible(state.currentRun),
     );
 
-    if (!state.currentRun || state.showAnalysis || state.lastCompletedRun || runBecameInvalid) {
+    if (dataChanged && (!state.currentRun || state.showAnalysis || state.lastCompletedRun || runBecameInvalid)) {
       render();
     }
   } catch (error) {
@@ -2437,11 +2443,14 @@ async function syncQuizPlayersFromServer() {
     }
 
     const payload = await response.json();
+    const dataVersion = typeof payload.updatedAt === "string" ? payload.updatedAt : null;
+    const dataChanged = !state.quizLeaderboardLoaded || state.quizDataVersion !== dataVersion;
     applyQuizPayload(payload);
     state.quizLeaderboardLoaded = true;
     state.quizLeaderboardError = null;
+    state.quizDataVersion = dataVersion;
 
-    if (!state.currentRun || state.showAnalysis || state.lastCompletedRun || getActiveMode() === "quiz") {
+    if (dataChanged && (!state.currentRun || state.showAnalysis || state.lastCompletedRun)) {
       render();
     }
   } catch (error) {
@@ -2463,11 +2472,14 @@ async function syncQuickQuizPlayersFromServer() {
     }
 
     const payload = await response.json();
+    const dataVersion = typeof payload.updatedAt === "string" ? payload.updatedAt : null;
+    const dataChanged = !state.quickQuizLoaded || state.quickQuizDataVersion !== dataVersion;
     applyQuickQuizPayload(payload);
     state.quickQuizLoaded = true;
     state.quickQuizError = null;
+    state.quickQuizDataVersion = dataVersion;
 
-    if (!state.currentRun || state.showAnalysis || state.lastCompletedRun || getActiveMode() === "quick") {
+    if (dataChanged && (!state.currentRun || state.showAnalysis || state.lastCompletedRun)) {
       render();
     }
   } catch (error) {
