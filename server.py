@@ -298,6 +298,21 @@ def sort_players(players: list[dict], mode: str) -> list[dict]:
             ),
         )
 
+    if mode == "quick":
+        return sorted(
+            players,
+            key=lambda player: (
+                -int(
+                    player.get("finalCoins")
+                    if isinstance(player.get("finalCoins"), (int, float))
+                    else 10
+                ),
+                -float(player.get("totalAccuracy", 0)),
+                str(player.get("completedAt", "")),
+                str(player.get("name", "")).lower(),
+            ),
+        )
+
     return sorted(
         players,
         key=lambda player: (
@@ -389,9 +404,9 @@ def serialize_db_payload(db: dict) -> dict:
     }
 
 
-def serialize_quiz_db_payload(db: dict) -> dict:
+def serialize_quiz_db_payload(db: dict, mode: str = "quiz") -> dict:
     return {
-        "players": sort_players(db.get("players", []), "quiz"),
+        "players": sort_players(db.get("players", []), mode),
         "history": sort_history(db.get("history", [])),
         "updatedAt": db.get("updatedAt"),
         "catalogSize": len(load_catalog_video_ids()),
@@ -486,7 +501,13 @@ class SharedLeaderboardHandler(SimpleHTTPRequestHandler):
                     QUICK_QUIZ_DB_PATH if parsed_path.path == "/api/quick-quiz-players" else QUIZ_DB_PATH,
                 )
 
-            self.respond_json(HTTPStatus.OK, serialize_quiz_db_payload(db))
+            self.respond_json(
+                HTTPStatus.OK,
+                serialize_quiz_db_payload(
+                    db,
+                    "quick" if parsed_path.path == "/api/quick-quiz-players" else "quiz",
+                ),
+            )
             return
 
         if parsed_path.path == "/api/analytics":
@@ -544,10 +565,13 @@ class SharedLeaderboardHandler(SimpleHTTPRequestHandler):
                         )
                         return
 
+                player_mode = (
+                    "quick" if parsed_path.path == "/api/quick-quiz-players" else "quiz"
+                ) if is_quiz else "friday"
                 db["players"] = upsert_player(
                     db.get("players", []),
                     payload,
-                    "quiz" if is_quiz else "friday",
+                    player_mode,
                 )
                 db["history"] = upsert_history_record(
                     db.get("history", []),
@@ -567,7 +591,10 @@ class SharedLeaderboardHandler(SimpleHTTPRequestHandler):
 
         self.respond_json(
             HTTPStatus.OK,
-            serialize_quiz_db_payload(db) if parsed_path.path in {"/api/quiz-players", "/api/quick-quiz-players"} else serialize_db_payload(db),
+            serialize_quiz_db_payload(
+                db,
+                "quick" if parsed_path.path == "/api/quick-quiz-players" else "quiz",
+            ) if parsed_path.path in {"/api/quiz-players", "/api/quick-quiz-players"} else serialize_db_payload(db),
         )
 
     def handle_analytics_event_post(self) -> None:

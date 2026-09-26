@@ -50,6 +50,7 @@ const QUIZ_TRACK_COUNT = 5;
 const QUIZ_CASCADE_COUNT = 5;
 const QUICK_QUIZ_VIDEO_COUNT = 21;
 const QUICK_QUIZ_GROUP_SIZE = 7;
+const QUICK_QUIZ_MIN_SUCCESS_RATE = 0.55;
 const QUICK_QUIZ_GROUPS = [
   { id: "pid-good", label: "PID did well", description: "PID made a confident, correct classification." },
   { id: "pid-uncertain", label: "PID was uncertain", description: "PID was closest to the decision boundary." },
@@ -96,6 +97,29 @@ const SECTION_TEMPLATES = [
   },
 ];
 
+const QUICK_QUIZ_BASELINE_RESULTS = {
+  "3012": { correct: 6, total: 8 },
+  "5177": { correct: 3, total: 8 },
+  "3622": { correct: 1, total: 8 },
+  "3101": { correct: 4, total: 8 },
+  "3250": { correct: 2, total: 8 },
+  "3076": { correct: 8, total: 8 },
+  "3020": { correct: 3, total: 8 },
+  "3228": { correct: 5, total: 8 },
+  "19202": { correct: 4, total: 8 },
+  "37327": { correct: 2, total: 8 },
+  "3785": { correct: 4, total: 8 },
+  "14600": { correct: 6, total: 8 },
+  "3910": { correct: 4, total: 8 },
+  "4905": { correct: 6, total: 8 },
+  "5318": { correct: 6, total: 8 },
+  "3281": { correct: 1, total: 8 },
+  "3342": { correct: 6, total: 8 },
+  "3448": { correct: 2, total: 8 },
+  "20540": { correct: 1, total: 8 },
+  "15108": { correct: 6, total: 8 },
+  "3628": { correct: 3, total: 8 },
+};
 const SEEDED_PUBLIC_LINE_COUNTS = {};
 const MODE_CONFIGS = {
   friday: {
@@ -113,7 +137,7 @@ const MODE_CONFIGS = {
   quick: {
     id: "quick",
     title: "4.0 Quick Quiz",
-    leaderboardTitle: "4.0 User Statistics",
+    leaderboardTitle: "4.0 Quick Quiz Leaderboard",
     startButtonLabel: "Start 4.0 quick quiz",
   },
 };
@@ -180,7 +204,11 @@ document.addEventListener("click", (event) => {
   const choiceButton = event.target.closest("[data-choice]");
 
   if (choiceButton) {
-    handleChoice(choiceButton.dataset.choice);
+    if (state.currentRun?.mode === "quick") {
+      answerQuizQuestion(choiceButton.dataset.choice);
+    } else {
+      handleChoice(choiceButton.dataset.choice);
+    }
     return;
   }
 
@@ -542,7 +570,7 @@ function render() {
       title: activeMode === "quick" ? "Loading 4.0 quick quiz" : activeMode === "quiz" ? "Loading learning quiz" : "Loading Friday lineup",
       description:
         activeMode === "quick"
-          ? "Preparing the 21-video 4.0 quiz and its separate statistics category."
+          ? "Preparing the selected 4.0 quiz videos and its separate statistics category."
           : activeMode === "quiz"
             ? "Preparing the full catalog and separate learning-quiz leaderboard."
           : "Preparing the shared Friday 15-video lineup and weekly leaderboard reset state.",
@@ -617,7 +645,7 @@ function renderLandingView() {
           <div class="mode-switcher">
             ${renderModeToggleButton("friday", "Friday Lineup", "Shared weekly run")}
             ${renderModeToggleButton("quiz", "Learning Quiz", "10 videos at once")}
-            ${renderModeToggleButton("quick", "4.0 Quick Quiz", "21 videos, one at a time")}
+            ${renderModeToggleButton("quick", "4.0 Quick Quiz", "Selected videos, one at a time")}
           </div>
           ${modeSpecificContent.hero}
         </div>
@@ -627,24 +655,22 @@ function renderLandingView() {
         <div class="panel-inner">
           <div class="table-caption">
             <div>
-              <p class="eyebrow">${activeMode === "quick" ? "Statistics" : activeMode === "quiz" ? "Learning Board" : "Live Board"}</p>
+              <p class="eyebrow">${activeMode === "quick" ? "4.0 Standings" : activeMode === "quiz" ? "Learning Board" : "Live Board"}</p>
               <h2 class="card-title">${MODE_CONFIGS[activeMode].leaderboardTitle}</h2>
             </div>
             <span class="pill-note">${hasLeaderboard
-              ? activeMode === "quick"
-                ? `${leaderboard.length} saved user record${leaderboard.length === 1 ? "" : "s"}`
-                : `${leaderboard.length} completed player${leaderboard.length === 1 ? "" : "s"}`
+              ? `${leaderboard.length} completed player${leaderboard.length === 1 ? "" : "s"}`
               : "Waiting on first finish"}</span>
           </div>
 
           ${
             hasLeaderboard
-              ? (activeMode === "quick" ? renderQuickQuizStatsOverview(leaderboard, state.quickQuizHistory) : renderLeaderboardTable(leaderboard, null, activeMode))
+              ? renderLeaderboardTable(leaderboard, null, activeMode)
               : `
                 <div class="empty-state">
                   <p class="empty-state-copy">
                     ${activeMode === "quick"
-                      ? "Completed 4.0 quizzes will create a separate statistics record with total correct, accuracy, and completion time."
+                      ? "Completed 4.0 quizzes will land here with their coin total, correct answers, accuracy, and completion time. This board stays separate from Friday and Learning Quiz results."
                       : activeMode === "quiz"
                         ? "Completed learning quizzes will land here with total correct, accuracy, and completion time."
                       : "Completed runs will land here with the player name, coin score, and accuracy."}
@@ -775,46 +801,48 @@ function renderLearningQuizLandingContent({ leaderboard, hasLeaderboard }) {
 }
 
 function renderQuickQuizLandingContent({ leaderboard, hasLeaderboard }) {
+  const activeVideoCount = getQuickQuizVideoCount();
+
   return {
     hero: `
-      <p class="eyebrow">4.0 • Low-energy set • 21 videos</p>
-      <h2 class="hero-title">Classify 21 videos, one at a time.</h2>
+      <p class="eyebrow">4.0 • Low-energy set • selected videos</p>
+      <h2 class="hero-title">Make a call, build your coin bank.</h2>
       <p class="hero-copy">
         Watch a video, select <strong>Track</strong> or <strong>Cascade</strong>, and continue to the next one.
-        Each answer is saved with your name for your personal statistics and exports.
+        Each answer is saved with your name for the separate 4.0 leaderboard and exports.
       </p>
 
       <div class="feature-strip">
         <div class="feature-chip">
-          <strong>21 Videos</strong>
-          <span>All 21 supplied low-energy videos appear once in every quiz.</span>
+          <strong>${activeVideoCount} Videos</strong>
+          <span>Every run uses the clips that have cleared the 55% success threshold.</span>
         </div>
         <div class="feature-chip">
-          <strong>One at a time</strong>
-          <span>Every video is presented individually in a randomized order.</span>
+          <strong>Coin play</strong>
+          <span>Start with 10 coins. Correct calls earn coins; wrong calls lose them.</span>
         </div>
         <div class="feature-chip">
-          <strong>Personal Data</strong>
-          <span>Your answers, accuracy, and response time are saved separately.</span>
+          <strong>Double or Nothing</strong>
+          <span>Choose the wager before a call to double that video’s risk and reward.</span>
         </div>
       </div>
 
       ${renderStartForm({
-        buttonLabel: "Start 4.0 quiz of 21 videos",
-        helperCopy: "Answer each clip once. Your answer key and personal statistics appear after video 21.",
+        buttonLabel: `Start 4.0 quiz of ${activeVideoCount} videos`,
+        helperCopy: "Answer each clip once. Your answer key, coin total, and leaderboard result appear after the final video.",
       })}
     `,
     aside: `
       <div class="mini-card-grid">
         <div class="mini-card">
-          <span>Saved data</span>
-          <strong>Personal statistics</strong>
-          <p>4.0 stores your answers, accuracy, and response times for export.</p>
+          <span>Separate board</span>
+          <strong>4.0 coin standings</strong>
+          <p>4.0 ranks its own players by coin total and never mixes with Friday or Learning Quiz results.</p>
         </div>
         <div class="mini-card">
-          <span>Review</span>
-          <strong>Answer key at end</strong>
-          <p>After the last answer, inspect each clip with your choice, the correct label, and full video review.</p>
+          <span>Live pick lines</span>
+          <strong>Community calls</strong>
+          <p>Each choice card shows how earlier 4.0 players called that same video.</p>
         </div>
       </div>
     `,
@@ -876,6 +904,8 @@ function renderQuickQuizQuestionView(run) {
   const video = getVideoForRunIndex(run, run.currentIndex);
   const completedCount = run.answers.length;
   const questionNumber = run.currentIndex + 1;
+  const currentCoins = getVisibleCoins(run, { coinMode: true });
+  const lines = getPublicLines(video.id, state.quickQuizPlayers);
 
   if (!video) {
     return renderCatalogStateView({
@@ -898,6 +928,10 @@ function renderQuickQuizQuestionView(run) {
               <span>Answers saved</span>
               <strong>${completedCount} of ${getRunVideoCount(run)}</strong>
             </div>
+            <div class="wallet-card">
+              <span>Coin Bank</span>
+              <strong><span class="wallet-display"><img class="coin-icon" src="${COIN_ICON_SRC}" alt="" aria-hidden="true" />${currentCoins}</span></strong>
+            </div>
           </div>
         </div>
 
@@ -910,9 +944,16 @@ function renderQuickQuizQuestionView(run) {
             <div class="round-note">
               <strong>What type of event is this?</strong>
             </div>
+            <label class="wager-toggle" for="double-down-toggle">
+              <input id="double-down-toggle" type="checkbox" data-double-down />
+              <span class="wager-copy">
+                <strong>Double or Nothing</strong>
+                <span>Wrong: -2 coins. Correct: +2 coins. A hot-hand correct earns +3.</span>
+              </span>
+            </label>
             <div class="choice-grid quick-quiz-choice-grid">
-              <button type="button" class="choice-button choice-button-track" data-quiz-answer="track">Track</button>
-              <button type="button" class="choice-button choice-button-cascade" data-quiz-answer="cascade">Cascade</button>
+              ${renderChoiceButton({ choice: "track", label: "Track", description: "Choose the elongated neutrino event class.", variant: "track", percentage: lines.trackPercentage, totalResponses: lines.totalResponses })}
+              ${renderChoiceButton({ choice: "cascade", label: "Cascade", description: "Choose the compact shower-like neutrino event class.", variant: "cascade", percentage: lines.cascadePercentage, totalResponses: lines.totalResponses })}
             </div>
           </div>
         </div>
@@ -924,6 +965,7 @@ function renderQuickQuizQuestionView(run) {
 function renderQuickQuizFeedbackView(run) {
   const answer = run.answers[run.answers.length - 1];
   const isFinalQuestion = answer.questionNumber === getRunVideoCount(run);
+  const coinDelta = answer.coinsAfter - answer.coinsBefore;
 
   return `
     <section class="panel appear">
@@ -935,6 +977,16 @@ function renderQuickQuizFeedbackView(run) {
             <strong>${answer.correct ? "Correct" : "Not quite"}</strong>
             <span>You chose ${titleCase(answer.choice)}.</span>
           </div>
+        </div>
+
+        <div class="feedback-grid">
+          <div class="feedback-card"><span>Coin movement</span><strong>${coinDelta > 0 ? "+" : ""}${coinDelta} coins</strong><p>Your bank is now ${answer.coinsAfter} coins.</p></div>
+          <div class="feedback-card"><span>Wager</span><strong>${answer.doubleDown ? "Double or Nothing" : "Standard"}</strong><p>${answer.streakBonusApplied ? "Hot-hand bonus applied." : "One video at a time."}</p></div>
+        </div>
+
+        <div class="line-grid">
+          ${renderLineCard("Track line before your pick", answer.publicLines.trackPercentage, "line-fill-track", answer.publicLines.totalResponses)}
+          ${renderLineCard("Cascade line before your pick", answer.publicLines.cascadePercentage, "line-fill-cascade", answer.publicLines.totalResponses)}
         </div>
 
         <div class="button-row">
@@ -1137,6 +1189,7 @@ function renderLearningQuizResultsView(run) {
 }
 
 function renderQuickQuizResultsView(run) {
+  const leaderboard = buildLeaderboard(state.quickQuizPlayers, "quick");
   const stats = calculateRunStats(run.answers, "quick");
 
   return `
@@ -1149,7 +1202,7 @@ function renderQuickQuizResultsView(run) {
               <h2 class="score-title">${escapeHtml(run.name)} completed all ${getRunVideoCount(run)} quiz videos</h2>
               <p class="hero-copy">
                 Your statistics are stored in the separate 4.0 export category. The answer key
-                below reveals each correct label and keeps all 21 clips available for review.
+                below reveals each correct label and keeps every video from this run available for review.
               </p>
             </div>
 
@@ -1167,11 +1220,8 @@ function renderQuickQuizResultsView(run) {
               <strong>${stats.totalCorrect}</strong>
               <p>${stats.totalQuestions - stats.totalCorrect} clips need another look.</p>
             </div>
-            <div class="summary-card">
-              <span>Accuracy</span>
-              <strong>${formatPercent(stats.totalAccuracy)}</strong>
-              <p>This is your personal result—there is no public ranking.</p>
-            </div>
+            <div class="summary-card"><span>Final coins</span><strong>${run.coins ?? 10}</strong><p>4.0 rankings use coin total, then accuracy.</p></div>
+            <div class="summary-card"><span>Accuracy</span><strong>${formatPercent(stats.totalAccuracy)}</strong><p>Correct calls and wagers stay in the 4.0 category only.</p></div>
             <div class="summary-card">
               <span>Track pool</span>
               <strong>${stats.sectionStats.track.correct} / ${stats.sectionStats.track.total}</strong>
@@ -1197,10 +1247,9 @@ function renderQuickQuizResultsView(run) {
 
       <aside class="panel">
         <div class="panel-inner">
-          <p class="eyebrow">4.0 Statistics</p>
-          <h2 class="card-title">Your saved quiz data</h2>
-          <p class="hero-copy">Your score, answer detail, and progress over time are saved in the 4.0 export category. This page does not show player standings.</p>
-          ${renderQuickQuizStatsOverview(state.quickQuizPlayers, state.quickQuizHistory, run.nameKey)}
+          <div class="table-caption"><div><p class="eyebrow">4.0 Standings</p><h2 class="card-title">4.0 Quick Quiz Leaderboard</h2></div><span class="pill-note">${leaderboard.length} completed player${leaderboard.length === 1 ? "" : "s"}</span></div>
+          <p class="hero-copy">This coin board is separate from Friday and Learning Quiz results.</p>
+          ${renderLeaderboardTable(leaderboard, run.nameKey, "quick")}
         </div>
       </aside>
     </section>
@@ -1547,7 +1596,7 @@ function renderLeaderboardTable(leaderboard, highlightedNameKey, mode = "friday"
                         : `
                           <span class="coin-badge">
                             <img class="coin-icon" src="${COIN_ICON_SRC}" alt="" aria-hidden="true" />
-                            ${player.finalCoins}
+                            ${typeof player.finalCoins === "number" ? player.finalCoins : 10}
                           </span>
                         `
                     }
@@ -2571,6 +2620,7 @@ function beginRun(rawName, mode = "friday") {
         currentIndex: 0,
         phase: "quick-question",
         answers: [],
+        coins: null,
         startedAt: new Date().toISOString(),
         questionStartedAt,
       }
@@ -2730,6 +2780,18 @@ function answerQuizQuestion(choice) {
   const timing = getCurrentQuestionTiming(run.questionStartedAt);
   const expectedChoice = getExpectedChoice(video.id);
   const group = getQuickQuizGroup(run, video.id);
+  const correct = choice === expectedChoice;
+  const doubleDown = isDoubleDownSelected();
+  const coinsBefore = typeof run.coins === "number" ? run.coins : 10;
+  const streakBefore = getCoinCorrectStreak(run.answers);
+  const streakBonusApplied = correct && streakBefore >= 2;
+  const streakAfter = correct ? streakBefore + 1 : 0;
+  const coinsAfter = correct
+    ? coinsBefore + (doubleDown ? (streakBonusApplied ? 3 : 2) : (streakBonusApplied ? 2 : 1))
+    : coinsBefore - (doubleDown ? 2 : 1);
+  const publicLines = getPublicLines(video.id, state.quickQuizPlayers);
+
+  run.coins = coinsAfter;
   const answer = {
     videoId: video.id,
     videoLabel: video.label,
@@ -2744,8 +2806,14 @@ function answerQuizQuestion(choice) {
     categoryId: group.id,
     categoryLabel: group.label,
     pid: video.pid,
-    correct: choice === expectedChoice,
-    publicLines: null,
+    correct,
+    coinsBefore,
+    coinsAfter,
+    doubleDown,
+    streakBefore,
+    streakAfter,
+    streakBonusApplied,
+    publicLines,
     ...timing,
   };
 
@@ -2756,6 +2824,8 @@ function answerQuizQuestion(choice) {
     nameKey: run.nameKey,
     videoId: video.id,
     choice,
+    correct,
+    doubleDown,
     questionNumber: answer.questionNumber,
     responseSeconds: timing.responseSeconds,
   });
@@ -2971,7 +3041,7 @@ async function finalizeQuickQuizRun(run) {
     nameKey: run.nameKey,
     startedAt: run.startedAt,
     completedAt,
-    finalCoins: null,
+    finalCoins: typeof run.coins === "number" ? run.coins : 10,
     totalCorrect: stats.totalCorrect,
     totalQuestions: stats.totalQuestions,
     totalAccuracy: stats.totalAccuracy,
@@ -2991,6 +3061,7 @@ async function finalizeQuickQuizRun(run) {
       totalCorrect: stats.totalCorrect,
       totalQuestions: stats.totalQuestions,
       totalAccuracy: stats.totalAccuracy,
+      finalCoins: playerRecord.finalCoins,
     });
     state.lastCompletedRun = playerRecord;
     state.currentRun = null;
@@ -3051,7 +3122,7 @@ function getQuickQuizGroupStats(answers) {
 
 function buildLeaderboard(players, mode = "friday") {
   return [...players].sort((left, right) => {
-    if (["quiz", "quick"].includes(mode)) {
+    if (mode === "quiz") {
       if (right.totalCorrect !== left.totalCorrect) {
         return right.totalCorrect - left.totalCorrect;
       }
@@ -3063,8 +3134,11 @@ function buildLeaderboard(players, mode = "friday") {
       return new Date(left.completedAt).getTime() - new Date(right.completedAt).getTime();
     }
 
-    if (right.finalCoins !== left.finalCoins) {
-      return right.finalCoins - left.finalCoins;
+    const leftCoins = typeof left.finalCoins === "number" ? left.finalCoins : 10;
+    const rightCoins = typeof right.finalCoins === "number" ? right.finalCoins : 10;
+
+    if (rightCoins !== leftCoins) {
+      return rightCoins - leftCoins;
     }
 
     if (right.totalAccuracy !== left.totalAccuracy) {
@@ -3385,7 +3459,7 @@ function getRunVideoCount(run = state.currentRun) {
   const configuredCount = run?.mode === "quiz"
     ? QUIZ_VIDEO_COUNT
     : run?.mode === "quick"
-      ? QUICK_QUIZ_VIDEO_COUNT
+      ? getQuickQuizVideoCount()
       : getConfiguredRunVideoCount();
 
   if (Array.isArray(run?.videoOrder) && run.videoOrder.length) {
@@ -3424,7 +3498,7 @@ function isCurrentRunCompatible(run) {
 
   if (run.mode === "quick") {
     return Array.isArray(run.videoOrder) &&
-      run.videoOrder.length === QUICK_QUIZ_VIDEO_COUNT &&
+      run.videoOrder.length === getQuickQuizVideoCount() &&
       run.videoGroups && typeof run.videoGroups === "object" &&
       run.videoOrder.every((videoId) => Boolean(ALL_VIDEOS_BY_ID[videoId]));
   }
@@ -3538,7 +3612,22 @@ function getPlayerSectionStat(player, sectionId) {
 }
 
 function getSeededLineCounts(videoId) {
-  return SEEDED_PUBLIC_LINE_COUNTS[videoId] || {
+  const configuredCounts = SEEDED_PUBLIC_LINE_COUNTS[videoId];
+
+  if (configuredCounts) {
+    return configuredCounts;
+  }
+
+  const baseline = QUICK_QUIZ_BASELINE_RESULTS[extractEventId(videoId)];
+  const expectedChoice = getExpectedChoice(videoId);
+
+  if (baseline && expectedChoice) {
+    return expectedChoice === "track"
+      ? { trackCount: baseline.correct, cascadeCount: baseline.total - baseline.correct }
+      : { trackCount: baseline.total - baseline.correct, cascadeCount: baseline.correct };
+  }
+
+  return {
     trackCount: 0,
     cascadeCount: 0,
   };
@@ -3557,12 +3646,13 @@ function buildQuizRunVideoOrder() {
 
 function buildQuickQuizRun() {
   const lowEnergyVideos = ALL_VIDEOS.filter((video) => video.sectionId === "low-energy" && video.pidGroup);
+  const eligibleVideos = lowEnergyVideos.filter(isQuickQuizEligibleVideo);
 
-  if (lowEnergyVideos.length === QUICK_QUIZ_VIDEO_COUNT) {
+  if (eligibleVideos.length) {
     return {
-      videoOrder: shuffleList(lowEnergyVideos).map((video) => video.id),
+      videoOrder: shuffleList(eligibleVideos).map((video) => video.id),
       videoGroups: Object.fromEntries(
-        lowEnergyVideos.map((video) => [video.id, `pid-${video.pidGroup}`]),
+        eligibleVideos.map((video) => [video.id, `pid-${video.pidGroup}`]),
       ),
     };
   }
@@ -3603,6 +3693,23 @@ function buildQuickQuizRun() {
     videoOrder: shuffleList(groups).flatMap((group) => shuffleList(group.videos).map((video) => video.id)),
     videoGroups,
   };
+}
+
+function getQuickQuizVideoCount() {
+  if (!ALL_VIDEOS.length) {
+    return Object.values(QUICK_QUIZ_BASELINE_RESULTS).filter(
+      ({ correct, total }) => correct / total >= QUICK_QUIZ_MIN_SUCCESS_RATE,
+    ).length;
+  }
+
+  return ALL_VIDEOS.filter(
+    (video) => video.sectionId === "low-energy" && isQuickQuizEligibleVideo(video),
+  ).length;
+}
+
+function isQuickQuizEligibleVideo(video) {
+  const baseline = QUICK_QUIZ_BASELINE_RESULTS[extractEventId(video.id)];
+  return Boolean(baseline && baseline.correct / baseline.total >= QUICK_QUIZ_MIN_SUCCESS_RATE);
 }
 
 function sampleBalancedQuickVideos(videos, count) {
