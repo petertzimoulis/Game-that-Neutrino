@@ -1721,7 +1721,15 @@
       "mode": "quiz",
       "nameKey": null,
       "visibilityState": "hidden"
+    },
+    {
+      "id": "session-1791832428040-vg98v9lq",
+      "sessionId": "session-1791832428036-vlujwzt0",
+      "type": "page_opened",
+      "timestamp": "2026-10-12T19:13:48.040Z",
+      "mode": "demo",
+      "nameKey": null
     }
   ],
-  "updatedAt": "2026-07-13T15:26:03.865706+00:00"
+  "updatedAt": "2026-10-12T19:13:52.215Z"
 }
