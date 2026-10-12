@@ -1795,7 +1795,15 @@
       "durationSeconds": 5.88,
       "playbackRate": 2,
       "paused": true
+    },
+    {
+      "id": "session-1791832479965-1aa1szrj",
+      "sessionId": "session-1791832428036-vlujwzt0",
+      "type": "go_home",
+      "timestamp": "2026-10-12T19:14:39.965Z",
+      "mode": "demo",
+      "nameKey": "presentation check"
     }
   ],
-  "updatedAt": "2026-10-12T19:14:14.253Z"
+  "updatedAt": "2026-10-12T19:14:44.239Z"
 }
