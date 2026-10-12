@@ -1729,7 +1729,73 @@
       "timestamp": "2026-10-12T19:13:48.040Z",
       "mode": "demo",
       "nameKey": null
+    },
+    {
+      "id": "session-1791832450000-79ie5jyy",
+      "sessionId": "session-1791832428036-vlujwzt0",
+      "type": "run_started",
+      "timestamp": "2026-10-12T19:14:10.000Z",
+      "mode": "demo",
+      "nameKey": "presentation check",
+      "runId": "run-1791832450000",
+      "videoCount": 15
+    },
+    {
+      "id": "session-1791832450019-wo2ryadj",
+      "sessionId": "session-1791832428036-vlujwzt0",
+      "type": "video_rate_change",
+      "timestamp": "2026-10-12T19:14:10.019Z",
+      "mode": "demo",
+      "nameKey": "presentation check",
+      "runId": "run-1791832450000",
+      "videoSrc": "https://game-that-neutrino-live.ptzimoulis.chatgpt.site/videos/Group%202/run120000_event15932_rot80deg_slowmo14.mp4",
+      "currentTimeSeconds": 0,
+      "durationSeconds": null,
+      "playbackRate": 2,
+      "paused": false
+    },
+    {
+      "id": "session-1791832450019-84p03b49",
+      "sessionId": "session-1791832428036-vlujwzt0",
+      "type": "video_play",
+      "timestamp": "2026-10-12T19:14:10.019Z",
+      "mode": "demo",
+      "nameKey": "presentation check",
+      "runId": "run-1791832450000",
+      "videoSrc": "https://game-that-neutrino-live.ptzimoulis.chatgpt.site/videos/Group%202/run120000_event15932_rot80deg_slowmo14.mp4",
+      "currentTimeSeconds": 0,
+      "durationSeconds": null,
+      "playbackRate": 2,
+      "paused": false
+    },
+    {
+      "id": "session-1791832453381-l1qp43id",
+      "sessionId": "session-1791832428036-vlujwzt0",
+      "type": "video_pause",
+      "timestamp": "2026-10-12T19:14:13.381Z",
+      "mode": "demo",
+      "nameKey": "presentation check",
+      "runId": "run-1791832450000",
+      "videoSrc": "https://game-that-neutrino-live.ptzimoulis.chatgpt.site/videos/Group%202/run120000_event15932_rot80deg_slowmo14.mp4",
+      "currentTimeSeconds": 5.88,
+      "durationSeconds": 5.88,
+      "playbackRate": 2,
+      "paused": true
+    },
+    {
+      "id": "session-1791832453381-4022j9ct",
+      "sessionId": "session-1791832428036-vlujwzt0",
+      "type": "video_ended",
+      "timestamp": "2026-10-12T19:14:13.381Z",
+      "mode": "demo",
+      "nameKey": "presentation check",
+      "runId": "run-1791832450000",
+      "videoSrc": "https://game-that-neutrino-live.ptzimoulis.chatgpt.site/videos/Group%202/run120000_event15932_rot80deg_slowmo14.mp4",
+      "currentTimeSeconds": 5.88,
+      "durationSeconds": 5.88,
+      "playbackRate": 2,
+      "paused": true
     }
   ],
-  "updatedAt": "2026-10-12T19:13:52.215Z"
+  "updatedAt": "2026-10-12T19:14:14.253Z"
 }
