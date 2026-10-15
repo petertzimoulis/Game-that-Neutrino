@@ -11,9 +11,12 @@ const GITHUB_RAW_ROOT = "https://raw.githubusercontent.com";
 const REPOSITORY_OWNER = "petertzimoulis";
 const REPOSITORY_NAME = "Game-that-Neutrino";
 const REPOSITORY_BRANCH = "main";
-const FRIDAY_DB_PATH = "data/shared_leaderboard.json";
-const QUIZ_DB_PATH = "data/quiz_leaderboard.json";
-const QUICK_QUIZ_DB_PATH = "data/quick_quiz_40.json";
+const GAME_STATE_EPOCH = "reset-20261015-1";
+const GAME_DATA_ROOT = `data/${GAME_STATE_EPOCH}`;
+const GAME_WRITE_PATHS = new Set(["/api/players", "/api/collaborator-players", "/api/quiz-players", "/api/quick-quiz-players", "/api/achievements", "/api/endless-players"]);
+const FRIDAY_DB_PATH = `${GAME_DATA_ROOT}/shared_leaderboard.json`;
+const QUIZ_DB_PATH = `${GAME_DATA_ROOT}/quiz_leaderboard.json`;
+const QUICK_QUIZ_DB_PATH = `${GAME_DATA_ROOT}/quick_quiz_40.json`;
 const ANALYTICS_DB_PATH = "data/analytics_events.json";
 const GITHUB_API_HEADERS = {
   Accept: "application/vnd.github+json",
@@ -27,6 +30,10 @@ export default {
   async fetch(request, env) {
     try {
       const url = new URL(request.url);
+
+      if (request.method === "POST" && GAME_WRITE_PATHS.has(url.pathname) && request.headers.get("X-Neutrino-State-Epoch") !== GAME_STATE_EPOCH) {
+        return jsonResponse({error: "The game was reset. Reload the page to start a fresh run."}, 409);
+      }
 
       if (url.pathname === "/api/endless-players") {
         return new Response(JSON.stringify({error: "Endless leaderboards use the independent server. Local guest saves remain available."}), {
@@ -45,7 +52,7 @@ export default {
       }
 
       if (url.pathname === "/api/achievements") {
-        const path = "data/achievements.json";
+        const path = `${GAME_DATA_ROOT}/achievements.json`;
         if (request.method === "GET") return jsonResponse(await readJsonFile(env, path, {profiles: []}));
         if (request.method === "POST") {
           const payload = await parseJsonBody(request);
@@ -125,7 +132,7 @@ export default {
       }
 
       if (url.pathname === "/api/collaborator-players") {
-        const path = "data/collaborator_leaderboard.json";
+        const path = `${GAME_DATA_ROOT}/collaborator_leaderboard.json`;
         const serialize = db => ({players: sortPlayers(db.players || [], "demo"), history: sortHistory(db.history || []), updatedAt: db.updatedAt || null});
         if (request.method === "GET") return jsonResponse(serialize(await readJsonFile(env, path, defaultQuizDb())));
         if (request.method === "POST") {
@@ -267,7 +274,7 @@ function jsonResponse(payload, status = 200) {
 
 function withCors(response) {
   response.headers.set("Access-Control-Allow-Origin", "*");
-  response.headers.set("Access-Control-Allow-Headers", "Content-Type");
+  response.headers.set("Access-Control-Allow-Headers", "Content-Type, X-Neutrino-State-Epoch");
   response.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   response.headers.set("Cache-Control", "no-store");
   return response;

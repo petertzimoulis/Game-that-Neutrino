@@ -1,5 +1,7 @@
 # Independent hosting
 
+The public Sites deployment was reset on October 15, 2026. Its active scores and trophies use `data/reset-20261015-1/` in GitHub; earlier files directly under `data/` are historical backups. Import the active directory when moving current scores to independent hosting. The reset also gives browser saves a fresh namespace and rejects score uploads from older open tabs. Analytics remain in their original location.
+
 The production path uses PostgreSQL, Gunicorn, nginx, and Caddy. It has no ChatGPT hosting, GitHub API, or other external application dependency at runtime. Videos are served by nginx and can optionally use your own media CDN. The older `server.py` entry point and `worker/` directory are legacy development/hosting paths; they are not launched by this setup.
 
 ## Start on a server

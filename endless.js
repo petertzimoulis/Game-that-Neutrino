@@ -192,7 +192,7 @@ async function syncEndlessFromServer({refresh = false} = {}) {
   let succeeded = false;
   try {
     for (const checkpoint of [...state.pendingEndlessRuns]) {
-      const response = await fetch(API_ENDLESS_PLAYERS_URL, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(checkpoint)});
+      const response = await fetch(API_ENDLESS_PLAYERS_URL, {method:"POST", headers:{"Content-Type":"application/json", "X-Neutrino-State-Epoch":GAME_STATE_EPOCH}, body:JSON.stringify(checkpoint)});
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Could not sync your Endless Mode checkpoint.");
       if (owner !== progressStorageOwner) return;

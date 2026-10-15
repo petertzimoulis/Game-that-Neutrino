@@ -1,3 +1,5 @@
+// Bump for an intentional site-wide reset so old saves and upload queues stay retired.
+const GAME_STATE_EPOCH = "reset-20261015-1";
 const STORAGE_KEYS = {
   currentRun: "game-that-neutrino-current-run",
   lastName: "game-that-neutrino-last-name",
@@ -13,8 +15,9 @@ const STORAGE_KEYS = {
   savedEndlessRun: "game-that-neutrino-endless-run",
   endlessOutbox: "game-that-neutrino-endless-outbox",
 };
+for (const key of Object.keys(STORAGE_KEYS)) STORAGE_KEYS[key] += `-${GAME_STATE_EPOCH}`;
 const GUEST_STORAGE_KEYS = {...STORAGE_KEYS};
-const ACCOUNT_OWNER_KEY = "game-that-neutrino-storage-owner";
+const ACCOUNT_OWNER_KEY = `game-that-neutrino-storage-owner-${GAME_STATE_EPOCH}`;
 let progressStorageOwner = loadStorage(ACCOUNT_OWNER_KEY, null);
 configureProgressStorage(progressStorageOwner);
 
@@ -2679,6 +2682,7 @@ async function uploadPlayerRecord(playerRecord) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "X-Neutrino-State-Epoch": GAME_STATE_EPOCH,
     },
     body: JSON.stringify(playerRecord),
   });
@@ -2707,6 +2711,7 @@ async function uploadQuizPlayerRecord(playerRecord) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "X-Neutrino-State-Epoch": GAME_STATE_EPOCH,
     },
     body: JSON.stringify(playerRecord),
   });
@@ -2733,7 +2738,7 @@ async function uploadQuizPlayerRecord(playerRecord) {
 async function uploadQuickQuizPlayerRecord(playerRecord) {
   const response = await fetch(API_QUICK_QUIZ_PLAYERS_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Neutrino-State-Epoch": GAME_STATE_EPOCH },
     body: JSON.stringify(playerRecord),
   });
 
@@ -4969,7 +4974,7 @@ async function syncAchievements() {
     mergeProfiles(payload.profiles, payload.partial);
     for (const profile of Object.values(state.localTrophies).filter(item => !item.synced)) {
       const submitted = [...profile.unlocked];
-      const posted = await fetch("/api/achievements", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({name: profile.name, unlocked: submitted})});
+      const posted = await fetch("/api/achievements", {method: "POST", headers: {"Content-Type": "application/json", "X-Neutrino-State-Epoch": GAME_STATE_EPOCH}, body: JSON.stringify({name: profile.name, unlocked: submitted})});
       if (!posted.ok) throw new Error("Could not sync trophies");
       payload = await posted.json();
       if (owner !== progressStorageOwner) return;
@@ -5078,7 +5083,7 @@ async function syncCollaboratorPlayersFromServer() {
     if (owner !== progressStorageOwner) return;
     // Remove a run only after the server confirms persistence. IDs make retries safe.
     for (const record of [...state.pendingCollaboratorRuns]) {
-      const posted = await fetch(API_COLLABORATOR_PLAYERS_URL, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(record)});
+      const posted = await fetch(API_COLLABORATOR_PLAYERS_URL, {method: "POST", headers: {"Content-Type": "application/json", "X-Neutrino-State-Epoch": GAME_STATE_EPOCH}, body: JSON.stringify(record)});
       if (!posted.ok) throw new Error("Could not upload a completed collaborator run. It is saved on this device and will retry.");
       applyCollaboratorPayload(await posted.json());
       if (owner !== progressStorageOwner) return;
