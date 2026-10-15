@@ -45,7 +45,6 @@ function getInitialSelectedMode() {
     return requestedMode;
   }
 
-  if (loadStorage(STORAGE_KEYS.selectedMode, null) === "endless" && loadStorage(STORAGE_KEYS.savedEndlessRun, null)) return "endless";
   return "demo";
 }
 
@@ -218,7 +217,7 @@ const state = {
   currentRun: getInitialRun(),
   lastName: loadStorage(STORAGE_KEYS.lastName, ""),
   selectedMode: getInitialSelectedMode(),
-  lastCompletedRun: loadStorage(STORAGE_KEYS.lastCompletedRun, null),
+  lastCompletedRun: loadStorage(STORAGE_KEYS.lastCompletedRun, null)?.mode === getInitialSelectedMode() ? loadStorage(STORAGE_KEYS.lastCompletedRun, null) : null,
   showHelp: false,
   showAnalysis: false,
   catalogLoaded: false,
@@ -787,8 +786,8 @@ function renderLandingView() {
       <article class="panel hero-card">
         <div class="panel-inner">
           <div class="mode-switcher">
-            ${renderModeToggleButton("endless", "Endless Mode", "Keep going • save & resume")}
             ${renderModeToggleButton("demo", "Collaborator Game", "All sets • full game experience")}
+            ${renderModeToggleButton("endless", "Endless Mode", "Keep going • save & resume")}
             ${renderModeToggleButton("friday", "Friday Lineup", "Shared weekly run")}
             ${renderModeToggleButton("quiz", "Learning Quiz", "10 videos at once")}
             ${renderModeToggleButton("quick", "4.0 Quick Quiz", "Selected videos, one at a time")}

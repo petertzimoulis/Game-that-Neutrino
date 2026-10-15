@@ -113,7 +113,7 @@ function becomeGuest() {
   writeLocalSnapshot(readLocalSnapshot());
 }
 
-async function restoreAccount(payload, guestProgress = null) {
+async function restoreAccount(payload, guestProgress = null, {entryMode = null} = {}) {
   const user = payload.user;
   accountState.epoch++;
   accountState.user = user;
@@ -143,6 +143,10 @@ async function restoreAccount(payload, guestProgress = null) {
     localStorage.setItem(STORAGE_KEYS.accountRevision, JSON.stringify(payload.revision));
     localStorage.setItem(STORAGE_KEYS.accountDirty, "false");
     accountState.status = "saved";
+  }
+  if (entryMode && !state.currentRun) {
+    state.selectedMode = entryMode;
+    state.lastCompletedRun = null;
   }
   state.showIntro = false;
   render();
@@ -350,7 +354,7 @@ const accountInitialization = (async () => {
   try {
     const payload = await accountRequest("/api/account");
     if (epoch !== accountState.epoch) return;
-    if (payload.user) await restoreAccount(payload);
+    if (payload.user) await restoreAccount(payload, null, {entryMode:getInitialSelectedMode()});
     else if (progressStorageOwner) { becomeGuest(); render(); }
   } catch (error) {
     accountState.error = "Account sync is unavailable. You can keep playing; progress stays on this device.";

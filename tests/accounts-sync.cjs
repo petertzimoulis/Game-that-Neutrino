@@ -92,5 +92,8 @@ const run = code => vm.runInContext(code,context);
   assert.equal(run('accountState.user'),null,'A session changed in another tab safely returns this tab to guest mode');
   assert.equal(users.get('Bob').progress.currentRun,null,'Alice’s unsaved progress never overwrites Bob’s account');
   assert.equal(memory.get(run('GUEST_STORAGE_KEYS.accountDirty')+'-account-alice'),'true','Expired-session progress stays available for the next Alice login');
+  users.get('Bob').progress.selectedMode='endless';
+  await run(`(async()=>{const payload=await accountRequest('/api/account');await restoreAccount(payload,null,{entryMode:getInitialSelectedMode()})})()`);
+  assert.equal(run('getActiveMode()'),'demo','Homepage stays on Collaborator after restoring a paused account');
   console.log('PASS: optional guest play, guest-to-account saves, password privacy, account isolation, resume, stale-device conflicts, and edits during an in-flight save.');
 })().catch(error=>{console.error(error);process.exitCode=1});
