@@ -1812,7 +1812,15 @@
       "mode": "demo",
       "nameKey": null,
       "visibilityState": "hidden"
+    },
+    {
+      "id": "session-1792095769989-84bhg8lw",
+      "sessionId": "session-1792095769986-k62txkq4",
+      "type": "page_opened",
+      "timestamp": "2026-10-15T20:22:49.989Z",
+      "mode": "demo",
+      "nameKey": null
     }
   ],
-  "updatedAt": "2026-10-12T19:16:47.586Z"
+  "updatedAt": "2026-10-15T20:23:20.277Z"
 }
