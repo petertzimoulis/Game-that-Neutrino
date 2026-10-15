@@ -133,7 +133,7 @@ def create_app(store=None):
             if request.method == "GET":
                 return public_payload("endless", endless.leaderboard)
             record = endless.save(body())
-            return jsonify(record=record, player=endless.best_for_player(record["nameKey"]))
+            return jsonify(record=record, player=endless.best_for_player(record["nameKey"]), crowdStats=endless.leaderboard()["crowdStats"])
         except EndlessError as error:
             return jsonify(error=str(error)), error.status
 

@@ -649,12 +649,12 @@ class SharedLeaderboardHandler(SimpleHTTPRequestHandler):
         if parsed_path.path == "/api/endless-players":
             try:
                 size = int(self.headers.get("Content-Length", "0"))
-                if not 0 < size <= 4096:
+                if not 0 < size <= 65536:
                     raise EndlessError(400, "Invalid checkpoint size.")
                 payload = json.loads(self.rfile.read(size).decode("utf-8"))
                 store = EndlessStore(account_store())
                 record = store.save(payload)
-                self.respond_json(HTTPStatus.OK, {"record": record, "player": store.best_for_player(record["nameKey"])})
+                self.respond_json(HTTPStatus.OK, {"record": record, "player": store.best_for_player(record["nameKey"]), "crowdStats": store.leaderboard()["crowdStats"]})
             except EndlessError as error:
                 self.respond_json(error.status, {"error": str(error)})
             except (ValueError, UnicodeError):

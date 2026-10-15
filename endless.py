@@ -39,7 +39,7 @@ def validate_checkpoint(payload):
         raise EndlessError(400, "Invalid wallet reset counter.")
     if any(type(value) is not int for value in [total, correct, coins, streak]):
         raise EndlessError(400, "Invalid Endless Mode score.")
-    if not 1 <= total <= 10**12 or not 0 <= correct <= total or not 0 <= streak <= correct or not 10 - 2 * total <= coins <= 10 + 3 * total:
+    if not 1 <= total <= 10**12 or not 0 <= correct <= total or not 0 <= streak <= correct or not 10 - 2 * total <= coins <= 10 + 5 * total:
         raise EndlessError(400, "Invalid Endless Mode totals.")
     if type(payload.get("isCompleted")) is not bool:
         raise EndlessError(400, "Invalid checkpoint status.")
@@ -56,6 +56,31 @@ def validate_checkpoint(payload):
               "completedAt": updated if payload["isCompleted"] else None,
               "totalQuestions": total, "totalCorrect": correct, "totalAccuracy": correct / total,
               "finalCoins": coins, "bestStreak": streak, "walletResets": wallet_resets, "isCompleted": payload["isCompleted"]}
+    for field, maximum in [("leaderboardBaseQuestions", total), ("leaderboardBaseCorrect", correct)]:
+        value = payload.get(field, 0)
+        if type(value) is not int or not 0 <= value <= maximum:
+            raise EndlessError(400, "Invalid leaderboard reset totals.")
+        record[field] = value
+    if record["leaderboardBaseCorrect"] > record["leaderboardBaseQuestions"] or correct - record["leaderboardBaseCorrect"] > total - record["leaderboardBaseQuestions"]:
+        raise EndlessError(400, "Invalid leaderboard reset accuracy.")
+    stats = payload.get("videoStats", {})
+    if not isinstance(stats, dict) or len(stats) > 100:
+        raise EndlessError(400, "Invalid video vote totals.")
+    counted = 0
+    for video_id, counts in stats.items():
+        if not isinstance(video_id, str) or not 1 <= len(video_id) <= 300 or not isinstance(counts, dict):
+            raise EndlessError(400, "Invalid video vote totals.")
+        values = [counts.get(field) for field in ["trackCount", "cascadeCount", "correctCount"]]
+        if any(type(value) is not int or not 0 <= value <= total for value in values) or values[2] > values[0] + values[1]:
+            raise EndlessError(400, "Invalid video vote totals.")
+        counted += values[0] + values[1]
+    if counted > total or sum(counts["correctCount"] for counts in stats.values()) > correct:
+        raise EndlessError(400, "Video votes exceed answered questions.")
+    record["videoStats"] = {video_id: {field: counts[field] for field in ["trackCount", "cascadeCount", "correctCount"]} for video_id, counts in stats.items()}
+    if wallet_resets:
+        if "leaderboardBaseQuestions" not in payload:
+            record["leaderboardBaseQuestions"], record["leaderboardBaseCorrect"] = total, correct
+        record["leaderboardResetAt"] = updated
     return record, hashlib.sha256(key.encode()).hexdigest()
 
 
@@ -82,6 +107,12 @@ class EndlessStore:
                 raise EndlessError(409, "The player and start time of a saved run cannot change.")
             delta = record["totalQuestions"] - old["totalQuestions"]
             reset_delta = record["walletResets"] - old.get("walletResets", 0)
+            if not reset_delta:
+                for field in ["leaderboardBaseQuestions", "leaderboardBaseCorrect"]:
+                    if field not in payload:
+                        record[field] = old.get(field, 0)
+                if old.get("leaderboardResetAt"):
+                    record["leaderboardResetAt"] = old["leaderboardResetAt"]
             if reset_delta < 0:
                 if delta <= 0 and not record["isCompleted"]:
                     return old
@@ -90,7 +121,7 @@ class EndlessStore:
                 if (old["isCompleted"] or record["isCompleted"] or delta < 0 or
                     not 0 <= record["totalCorrect"] - old["totalCorrect"] <= delta or
                     record["bestStreak"] < old["bestStreak"] or
-                    not 10 - 2 * delta <= record["finalCoins"] <= 10 + 3 * delta):
+                    not 10 - 2 * (record["totalQuestions"] - record["leaderboardBaseQuestions"]) <= record["finalCoins"] <= 10 + 5 * (record["totalQuestions"] - record["leaderboardBaseQuestions"])):
                     raise EndlessError(409, "Reset the wallet to 10 coins without changing lifetime progress.")
             elif delta < 0:
                 if record["isCompleted"]:
@@ -102,9 +133,22 @@ class EndlessStore:
                 if old["isCompleted"] or not record["isCompleted"]:
                     return old
             elif (old["isCompleted"] or not 0 <= record["totalCorrect"] - old["totalCorrect"] <= delta or
-                  not -2 * delta <= record["finalCoins"] - old["finalCoins"] <= 3 * delta or
+                  not -2 * delta <= record["finalCoins"] - old["finalCoins"] <= 5 * delta or
                   record["bestStreak"] < old["bestStreak"]):
                 raise EndlessError(409, "This update does not continue the saved run.")
+            if reset_delta > 0:
+                if (record["leaderboardBaseQuestions"] < old["totalQuestions"] or
+                    record["leaderboardBaseCorrect"] < old["totalCorrect"]):
+                    raise EndlessError(409, "A reset cannot restore an older leaderboard score.")
+            elif any(record.get(field, 0) != old.get(field, 0) for field in ["leaderboardBaseQuestions", "leaderboardBaseCorrect"]):
+                raise EndlessError(409, "Reset the wallet before clearing the leaderboard score.")
+            for video_id, counts in old.get("videoStats", {}).items():
+                if any(record["videoStats"].get(video_id, {}).get(field, 0) < value for field, value in counts.items()):
+                    raise EndlessError(409, "Recorded votes cannot be removed.")
+            old_count = sum(v["trackCount"] + v["cascadeCount"] for v in old.get("videoStats", {}).values())
+            new_count = sum(v["trackCount"] + v["cascadeCount"] for v in record["videoStats"].values())
+            if new_count - old_count > delta:
+                raise EndlessError(409, "Votes must continue the answered questions.")
             store.query(conn, """UPDATE endless_runs SET total_correct = ?, total_questions = ?, total_accuracy = ?,
                 coins = ?, updated_at = ?, record = ? WHERE run_id = ?""",
                 (record["totalCorrect"], record["totalQuestions"], record["totalAccuracy"],
@@ -113,15 +157,32 @@ class EndlessStore:
 
     def leaderboard(self):
         with self.storage.connect() as conn:
-            rows = self.storage.query(conn, """SELECT record FROM (
-                SELECT *, row_number() OVER (PARTITION BY name_key ORDER BY
-                    total_correct DESC, total_accuracy DESC, coins DESC, updated_at, run_id) AS position
-                FROM endless_runs) ranked WHERE position = 1
-                ORDER BY total_correct DESC, total_accuracy DESC, coins DESC, name_key""").fetchall()
-        return {"players": [json.loads(row["record"]) for row in rows]}
+            rows = self.storage.query(conn, "SELECT record FROM endless_runs").fetchall()
+        records = [json.loads(row["record"]) for row in rows]
+        resets = {}
+        crowd = {}
+        for record in records:
+            if record.get("leaderboardResetAt", "") > resets.get(record["nameKey"], {}).get("leaderboardResetAt", ""):
+                resets[record["nameKey"]] = record
+            for video_id, counts in record.get("videoStats", {}).items():
+                combined = crowd.setdefault(video_id, {"trackCount":0, "cascadeCount":0, "correctCount":0})
+                for field in combined:
+                    combined[field] += counts[field]
+        best = {}
+        def rank(record):
+            questions = record["totalQuestions"] - record.get("leaderboardBaseQuestions", 0)
+            correct = record["totalCorrect"] - record.get("leaderboardBaseCorrect", 0)
+            return (-correct, -(correct / questions if questions else 0), -record["finalCoins"], record["nameKey"], record["id"])
+        for record in records:
+            reset = resets.get(record["nameKey"])
+            if reset and record["id"] != reset["id"] and record["startedAt"] <= reset["leaderboardResetAt"]:
+                continue
+            if record["totalQuestions"] <= record.get("leaderboardBaseQuestions", 0):
+                continue
+            old = best.get(record["nameKey"])
+            if not old or rank(record) < rank(old):
+                best[record["nameKey"]] = record
+        return {"players": sorted(best.values(), key=rank), "crowdStats":crowd, "history":records}
 
     def best_for_player(self, name_key):
-        with self.storage.connect() as conn:
-            row = self.storage.query(conn, """SELECT record FROM endless_runs WHERE name_key = ?
-                ORDER BY total_correct DESC, total_accuracy DESC, coins DESC, updated_at, run_id LIMIT 1""", (name_key,)).fetchone()
-        return json.loads(row["record"]) if row else None
+        return next((record for record in self.leaderboard()["players"] if record["nameKey"] == name_key), None)

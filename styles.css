@@ -2332,3 +2332,9 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 @media (max-width: 600px) {
   .mobile-vote-context { display: block; order: 0; margin: 0; font-size: .7rem; color: var(--muted); line-height: 1.4; }
 }
+
+/* Keep coin totals at the wallet's value size and celebrate saved Endless rewards. */
+.wallet-card .wallet-display { display: inline-flex; color: inherit; font-size: inherit; letter-spacing: normal; text-transform: none; }
+.coin-movement-pop { display: inline-flex; align-items: center; gap: 8px; animation: coin-movement-pop 550ms ease-out both; }
+@keyframes coin-movement-pop { from { opacity: .4; transform: translateY(10px) scale(.9); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@media (prefers-reduced-motion: reduce) { .coin-movement-pop { animation: none; } }

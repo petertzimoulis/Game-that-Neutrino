@@ -25,7 +25,8 @@ class EndlessContract:
         self.assertEqual(saved['totalCorrect'], 120)
         self.assertEqual(saved['walletResets'], 1)
         self.assertEqual(self.endless.save(reset), saved)
-        self.assertEqual(self.endless.leaderboard()['players'][0]['finalCoins'], 10)
+        self.assertEqual(self.endless.leaderboard()['players'], [])
+        self.assertIsNone(self.endless.best_for_player('alice'))
         with self.assertRaises(EndlessError) as error:
             self.endless.save({**reset, 'walletResets': 2, 'checkpointKey': 'b' * 64})
         self.assertEqual(error.exception.status, 403)
@@ -43,14 +44,45 @@ class EndlessContract:
         for changes in [{'finalCoins':11}, {'totalCorrect':79}, {'bestStreak':9}, {'totalQuestions':99}]:
             with self.assertRaises(EndlessError):
                 self.endless.save({**original, 'finalCoins':10, 'walletResets':2, **changes})
-        self.assertEqual(self.endless.leaderboard()['players'][0], reset)
+        self.assertEqual(self.endless.leaderboard()['players'], [])
 
     def test_offline_reset_then_new_answers_can_sync_together(self):
         self.endless.save(checkpoint(total=100, correct=80, coins=100))
-        updated = self.endless.save({**checkpoint(total=105,correct=84,coins=14),'walletResets':3})
+        updated = self.endless.save({**checkpoint(total=105,correct=84,coins=14),'walletResets':3, 'leaderboardBaseQuestions':100, 'leaderboardBaseCorrect':80})
         self.assertEqual(updated['walletResets'], 3)
         self.assertEqual(updated['totalQuestions'], 105)
         self.assertEqual(updated['finalCoins'], 14)
+
+    def test_reset_hides_older_runs_and_restarts_ranking_without_removing_votes(self):
+        self.endless.save(checkpoint(run_id="older", total=50, correct=50, coins=100))
+        initial = {**checkpoint(total=100, correct=80, coins=100), "videoStats":{"clip":{"trackCount":80,"cascadeCount":20,"correctCount":80}}}
+        self.endless.save(initial)
+        reset = {**initial, "walletResets":1, "finalCoins":10, "leaderboardBaseQuestions":100, "leaderboardBaseCorrect":80}
+        self.endless.save(reset)
+        self.assertEqual(self.endless.leaderboard()["players"], [])
+        self.assertEqual(self.endless.leaderboard()["crowdStats"]["clip"]["trackCount"], 80)
+        self.assertEqual(len(self.endless.leaderboard()["history"]), 2, "Reset retains research history")
+        resumed = {**reset, "totalQuestions":101, "totalCorrect":81, "finalCoins":15,
+                   "videoStats":{"clip":{"trackCount":81,"cascadeCount":20,"correctCount":81}}}
+        saved = self.endless.save(resumed)
+        self.assertEqual(saved["totalCorrect"] - saved["leaderboardBaseCorrect"], 1)
+        self.assertEqual(self.endless.leaderboard()["players"][0]["id"], "run-a")
+        self.endless.save(resumed)
+        self.assertEqual(self.endless.leaderboard()["crowdStats"]["clip"]["trackCount"], 81)
+        self.endless.save(initial)  # A stale device cannot restore pre-reset standings.
+        self.assertEqual(self.endless.best_for_player("alice")["finalCoins"], 15)
+        with self.assertRaises(EndlessError):
+            self.endless.save({**resumed,"totalQuestions":102,"totalCorrect":82,"finalCoins":16,"leaderboardBaseQuestions":0,"leaderboardBaseCorrect":0})
+
+    def test_vote_totals_are_bounded_and_monotonic(self):
+        initial = {**checkpoint(), "videoStats":{"clip":{"trackCount":8,"cascadeCount":2,"correctCount":10}}}
+        self.endless.save(initial)
+        for stats in [{"clip":{"trackCount":7,"cascadeCount":2,"correctCount":9}}, {"clip":{"trackCount":10,"cascadeCount":2,"correctCount":10}}]:
+            with self.assertRaises(EndlessError):
+                self.endless.save({**initial,"totalQuestions":11,"totalCorrect":11,"finalCoins":30,"videoStats":stats})
+        for stats in [{"clip":{"trackCount":True,"cascadeCount":0,"correctCount":0}}, {"clip":{"trackCount":11,"cascadeCount":0,"correctCount":0}}]:
+            with self.assertRaises(EndlessError):
+                self.endless.save({**checkpoint(run_id="bad"),"videoStats":stats})
 
     def test_checkpoint_persists_beyond_100_and_retries_are_idempotent(self):
         record = checkpoint(total=150, correct=120, coins=190)

@@ -208,6 +208,8 @@ const state = {
   quickQuizPlayers: [],
   quickQuizHistory: [],
   endlessPlayers: [],
+  endlessHistory: [],
+  endlessCrowdStats: {},
   endlessLoaded: false,
   endlessError: null,
   savedEndlessRun: loadStorage(STORAGE_KEYS.savedEndlessRun, null),
@@ -1472,12 +1474,12 @@ function renderQuizReviewCard(answer) {
 }
 
 function renderQuestionView(run) {
-  const section = run.mode === "demo" ? DEMO_SECTION : getSectionForIndex(run.currentIndex);
+  const section = ["demo", "endless"].includes(run.mode) ? {...DEMO_SECTION, ...(run.mode === "endless" ? {label:"Endless Mode", title:"Keep reading the light."} : {})} : getSectionForIndex(run.currentIndex);
   const video = getVideoForRunIndex(run, run.currentIndex);
   const currentCoins = getVisibleCoins(run, section);
   const questionInSection = run.currentIndex - section.startIndex + 1;
   const sectionQuestionCount = getRunVideoCount(run);
-  const overallQuestionNumber = run.currentIndex + 1;
+  const overallQuestionNumber = run.mode === "endless" ? run.totalQuestions + 1 : run.currentIndex + 1;
   const lines = section.publicLines ? getPublicLines(video.id, getCrowdPlayers(run.mode)) : null;
 
   return `
@@ -1487,7 +1489,7 @@ function renderQuestionView(run) {
           <div class="game-heading-block">
             <p class="eyebrow">${section.label}</p>
             <h2 class="hero-title">${section.title}</h2>
-            <p class="game-copy">Clip ${overallQuestionNumber} of ${getRunVideoCount(run)} • Question ${questionInSection} of ${sectionQuestionCount} in this run</p>
+            <p class="game-copy">${run.mode === "endless" ? `Question ${overallQuestionNumber} • Saved progress across visits • No finish line` : `Clip ${overallQuestionNumber} of ${getRunVideoCount(run)} • Question ${questionInSection} of ${sectionQuestionCount} in this run`}</p>
           </div>
 
           <div class="status-strip status-strip-compact">
@@ -1497,7 +1499,7 @@ function renderQuestionView(run) {
             </div>
             <div class="stat-card">
               <span>Question</span>
-              <strong>${overallQuestionNumber} / ${getRunVideoCount(run)}</strong>
+              <strong>${overallQuestionNumber} / ${run.mode === "endless" ? "∞" : getRunVideoCount(run)}</strong>
             </div>
             <div class="wallet-card">
               <span>Coin Bank</span>
@@ -1583,7 +1585,7 @@ function renderQuestionView(run) {
               <div class="mini-card compact-card">
                 <span>Public line</span>
                 <strong>Built into each pick</strong>
-                <p>Track and Cascade percentages are part of the answer cards and reflect the latest completed runs for that clip.</p>
+                <p>Track and Cascade percentages are part of the answer cards and reflect ${run.mode === "endless" ? "saved Endless picks" : "the latest completed runs"} for that clip.</p>
               </div>
             </div>
           </div>
@@ -1595,7 +1597,7 @@ function renderQuestionView(run) {
 
 function renderFeedbackView(run) {
   const answer = run.answers[run.answers.length - 1];
-  const isFinalQuestion = run.currentIndex === getRunVideoCount(run) - 1;
+  const isFinalQuestion = run.mode !== "endless" && run.currentIndex === getRunVideoCount(run) - 1;
   const coinDelta = typeof answer.coinsAfter === "number" ? answer.coinsAfter - answer.coinsBefore : null;
   const nextLabel = isFinalQuestion ? "Finish and show leaderboard" : "Next video";
   const expectedChoice = getExpectedChoice(answer.videoId) || answer.choice;
@@ -1639,12 +1641,12 @@ function renderFeedbackView(run) {
           </div>
           <div class="feedback-card">
             <span>Question progress</span>
-            <strong>${answer.questionNumber} / ${getRunVideoCount(run)}</strong>
-            <p>${answer.sectionLabel}, question ${answer.sectionQuestionNumber} of ${sectionQuestionCount}.</p>
+            <strong>${answer.questionNumber} / ${run.mode === "endless" ? "∞" : getRunVideoCount(run)}</strong>
+            <p>${run.mode === "endless" ? "Your progress continues across visits." : `${answer.sectionLabel}, question ${answer.sectionQuestionNumber} of ${sectionQuestionCount}.`}</p>
           </div>
           <div class="feedback-card">
             <span>Coin movement</span>
-            <strong>${coinDelta === null ? "No change" : `${coinDelta > 0 ? "+" : ""}${coinDelta} coin${Math.abs(coinDelta) === 1 ? "" : "s"}`}</strong>
+            <strong class="${run.mode === "endless" ? "coin-movement-pop" : ""}">${run.mode === "endless" ? `<img class="coin-icon" src="${COIN_ICON_SRC}" alt="" aria-hidden="true" />` : ""}${coinDelta === null ? "No change" : `${coinDelta > 0 ? "+" : ""}${coinDelta} coin${Math.abs(coinDelta) === 1 ? "" : "s"}`}</strong>
             <p>${coinMovementCopy}</p>
           </div>
         </div>
@@ -1842,7 +1844,7 @@ function getReportRecords(mode = getReportMode()) {
   const sources = {
     demo: [state.demoPlayers, state.demoHistory], friday: [state.players, state.playerHistory],
     quiz: [state.quizPlayers, state.quizHistory], quick: [state.quickQuizPlayers, state.quickQuizHistory],
-    endless: [state.endlessPlayers, [state.currentRun, state.savedEndlessRun, ...Object.values(state.endlessProfiles || {}), state.lastCompletedRun,
+    endless: [state.endlessPlayers, state.endlessHistory, [state.currentRun, state.savedEndlessRun, ...Object.values(state.endlessProfiles || {}), state.lastCompletedRun,
       ...loadStorage(STORAGE_KEYS.completedRuns, [])].filter(run => run?.mode === "endless")],
   };
   const records = new Map();
@@ -2574,7 +2576,7 @@ function renderChoiceButton({
   totalResponses,
 }) {
   const hasPublicLine = typeof percentage === "number";
-  const bonus = state.currentRun?.mode === "endless" ? 0 : getCrowdBonus(getCurrentChoiceLines(), choice, true);
+  const bonus = getCrowdBonus(getCurrentChoiceLines(), choice, true);
   const responsesLabel = totalResponses
     ? `${totalResponses} public pick${totalResponses === 1 ? "" : "s"}`
     : "reference estimate when available; otherwise 50/50. No live votes yet";
@@ -4235,7 +4237,7 @@ function buildQuizStatus(run) {
 }
 
 function getPlayersForMode(mode) {
-  if (mode === "endless") return state.endlessPlayers;
+  if (mode === "endless") return state.endlessPlayers.filter(player => endlessBoardQuestions(player) > 0);
   return mode === "demo" ? state.demoPlayers : mode === "quiz"
     ? state.quizPlayers
     : mode === "quick"
@@ -5017,6 +5019,7 @@ function calculateAfterHalfRate(answers) {
 
 
 function getCrowdPlayers(mode) {
+  if (mode === "endless") { const players = []; players.crowdStats = state.endlessCrowdStats || {}; return players; }
   if (mode !== "demo") return getPlayersForMode(mode);
   const records = [...state.playerHistory, ...state.players, ...state.quizHistory, ...state.quizPlayers, ...state.quickQuizHistory, ...state.quickQuizPlayers, ...state.demoHistory, ...state.demoPlayers];
   const players = [...new Map(records.filter(player => !player.isSeedData).map(player => [player.id, player])).values()];
@@ -5045,7 +5048,7 @@ function renderGameMechanics() {
     <article><span class="mechanic-number">01</span><strong>Make the call</strong><p>Start with 10 coins. Correct: +1. Incorrect: −1. Watch, replay, then choose.</p></article>
     <article><span class="mechanic-number">02</span><strong>Build a hot hand</strong><p>After two correct calls in a row, each next correct call earns +2 until you miss.</p></article>
     <article><span class="mechanic-number">03</span><strong>Raise the stakes</strong><p>Double or Nothing: +2 on a hit, −2 on a miss. A hot-hand hit earns +3.</p></article>
-    ${getActiveMode() === "endless" ? `<article><span class="mechanic-number">04</span><strong>Save your place</strong><p>Your player keeps the same wallet and lifetime progress across visits. Reset to 10 coins whenever you want; your lifetime stats stay saved.</p></article>` : `<article><span class="mechanic-number">04</span><strong>Go against the crowd</strong><p>Choose an answer with under 25% of recorded votes for +2 extra coins when your answer is correct. No votes means no bonus.</p></article>`}
+    <article><span class="mechanic-number">04</span><strong>Go against the crowd</strong><p>Choose an answer with under 25% of recorded votes for +2 extra coins when your answer is correct. No votes means no bonus.</p></article>
   </div>`;
 }
 
