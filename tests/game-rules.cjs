@@ -11,6 +11,13 @@ vm.runInContext(fs.readFileSync(require('path').join(__dirname,'../app.js'),'utf
 vm.runInContext(`
 function check(value, message) { if (!value) throw new Error(message); }
 check(getInitialSelectedMode() === 'demo', 'default demo');
+check(Object.keys(MODE_CONFIGS).length===2 && MODE_CONFIGS.demo && MODE_CONFIGS.endless, 'only two current modes');
+for (const retired of ['friday','quiz','quick']) {
+ window.location.search='?mode='+retired;
+ check(getRequestedMode()===null && getInitialSelectedMode()==='demo', 'retired links fall back to collaborator');
+ check(normalizeStoredRun({mode:retired,answers:[]})===null, 'retired saved games cannot resume');
+}
+window.location.search='';
 for (const test of [{total:0,count:0,want:0},{total:4,count:1,want:0},{total:5,count:1,want:2},{total:10,count:0,want:2},{total:10,count:9,want:0}]) {
  check(getCrowdBonus({totalResponses:test.total,trackCount:test.count,cascadeCount:test.total-test.count},'track',true) === test.want, 'bonus boundary '+JSON.stringify(test));
 }
@@ -19,6 +26,10 @@ ALL_VIDEOS.push({id:'Low Energy Quiz/legacy',sourceGroup:'Low Energy Quiz',corre
 ALL_VIDEOS_BY_ID = Object.fromEntries(ALL_VIDEOS.map(v=>[v.id,v]));
 state.catalogLoaded=true;
 for(let i=0;i<100;i++) { const order=buildRunVideoOrder('demo'); check(order.length===5 && new Set(order).size===5, 'five unique clips'); check(new Set(order.map(id=>ALL_VIDEOS_BY_ID[id].sourceGroup)).size===4,'all four new sets'); }
+for (const retired of ['friday','quiz','quick']) {
+ beginRun('Retired mode caller',retired);
+ check(state.currentRun.mode==='demo', 'stale callers cannot create retired games');
+}
 beginRun('Presentation tester','demo');
 check(isCurrentRunCompatible(state.currentRun), 'demo compatibility');
 const id=state.currentRun.videoOrder[0];

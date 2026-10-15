@@ -27,7 +27,7 @@ vm.runInContext(`
   check(calls.length===0,'focus refresh throttled');
   state.selectedMode='quiz';
   await syncAllDataFromServer({force:true});
-  check(calls.length===1 && calls[0]===API_QUIZ_PLAYERS_URL,'mode switch fetches only selected leaderboard');
+  check(calls.length===1 && calls[0]===API_COLLABORATOR_PLAYERS_URL,'retired saved modes fall back to the collaborator leaderboard');
   const first={id:'first',name:'One',nameKey:'one',completedAt:'2026-10-15T00:00:00Z',answers:[]};
   const second={id:'second',name:'Two',nameKey:'two',completedAt:'2026-10-15T01:00:00Z',answers:[]};
   applyCollaboratorPayload({players:[first],crowdStats:{clip:{trackCount:2,cascadeCount:8,correctCount:2}}});

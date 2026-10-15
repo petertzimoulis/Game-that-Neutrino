@@ -69,10 +69,10 @@ async function accountRequest(path, data) {
 function writeLocalSnapshot(progress) {
   state.currentRun = normalizeStoredRun(progress.currentRun || null);
   if (state.currentRun) state.currentRun.isFinalizing = false;
-  state.lastCompletedRun = progress.lastCompletedRun || null;
+  state.lastCompletedRun = PLAYABLE_MODES.includes(progress.lastCompletedRun?.mode) ? progress.lastCompletedRun : null;
   state.localTrophies = progress.trophies || {};
   state.lastName = progress.lastName || accountState.user?.username || "";
-  state.selectedMode = ["demo", "friday", "quiz", "quick", "endless"].includes(progress.selectedMode) ? progress.selectedMode : "demo";
+  state.selectedMode = PLAYABLE_MODES.includes(progress.selectedMode) ? progress.selectedMode : "demo";
   state.pendingCollaboratorRuns = Array.isArray(progress.pendingRuns) ? progress.pendingRuns : [];
   state.savedEndlessRun = progress.endlessRun || (state.currentRun?.mode === "endless" ? state.currentRun : null);
   state.endlessProfiles = loadStorage(STORAGE_KEYS.endlessProfiles, {});
@@ -219,7 +219,7 @@ function renderAccountControls() {
   if (!accountState.show) { root.innerHTML = ""; return; }
   const user = accountState.user;
   const register = accountState.tab === "register";
-  const recent = loadStorage(STORAGE_KEYS.completedRuns, []);
+  const recent = loadStorage(STORAGE_KEYS.completedRuns, []).filter(run => PLAYABLE_MODES.includes(run.mode));
   root.innerHTML = `<div class="account-backdrop"><section class="account-dialog" role="dialog" aria-modal="true" aria-labelledby="account-title" tabindex="-1">
     <div class="table-caption"><div><p class="eyebrow">${user ? "Your account" : "Keep your progress"}</p><h2 class="card-title" id="account-title">${user ? escapeHtml(user.username) : register ? "Create an account" : "Welcome back"}</h2></div><button type="button" class="ghost-button" data-account-action="close" aria-label="Close account dialog">Close ×</button></div>
     <p class="subtle-copy">${user ? "Your unfinished game, recent results, and trophies can follow you to another device." : "Log in to save your games and trophies across devices. You can always play without an account."}</p>

@@ -1,5 +1,6 @@
 // Bump for an intentional site-wide reset so old saves and upload queues stay retired.
 const GAME_STATE_EPOCH = "reset-20261015-1";
+const PLAYABLE_MODES = ["demo", "endless"];
 const STORAGE_KEYS = {
   currentRun: "game-that-neutrino-current-run",
   lastName: "game-that-neutrino-last-name",
@@ -33,7 +34,7 @@ function configureProgressStorage(owner) {
 function getRequestedMode() {
   const requestedMode = new URLSearchParams(window.location.search).get("mode");
 
-  return ["demo", "friday", "quiz", "quick", "endless"].includes(requestedMode)
+  return PLAYABLE_MODES.includes(requestedMode)
     ? requestedMode
     : null;
 }
@@ -160,24 +161,6 @@ const SEEDED_PUBLIC_LINE_COUNTS = {};
 const MODE_CONFIGS = {
   endless: {id:"endless",title:"Endless Mode",leaderboardTitle:"Endless leaderboard",startButtonLabel:"Continue Endless Mode"},
   demo: { id: "demo", title: "Collaborator Game", leaderboardTitle: "Global collaborator leaderboard", startButtonLabel: "Start collaborator game" },
-  friday: {
-    id: "friday",
-    title: "Friday Lineup",
-    leaderboardTitle: "Friday Leaderboard",
-    startButtonLabel: "Start Friday lineup",
-  },
-  quiz: {
-    id: "quiz",
-    title: "Learning Quiz",
-    leaderboardTitle: "Learning Quiz Leaderboard",
-    startButtonLabel: "Start learning quiz",
-  },
-  quick: {
-    id: "quick",
-    title: "4.0 Quick Quiz",
-    leaderboardTitle: "4.0 Quick Quiz Leaderboard",
-    startButtonLabel: "Start 4.0 quick quiz",
-  },
 };
 
 let ALL_VIDEOS = [];
@@ -377,7 +360,7 @@ document.addEventListener("click", (event) => {
       void syncAllDataFromServer({force: true});
       break;
     case "select-analysis-mode":
-      if (!["demo", "friday", "quiz", "quick", "endless"].includes(actionButton.dataset.mode)) break;
+      if (!PLAYABLE_MODES.includes(actionButton.dataset.mode)) break;
       state.analysisMode = actionButton.dataset.mode;
       render();
       void syncAllDataFromServer({force: true});
@@ -693,36 +676,20 @@ function render() {
   if (typeof renderAccountControls === "function") renderAccountControls();
   document.body.classList.toggle("is-playing", Boolean(state.currentRun && ["question", "quick-question", "feedback", "quick-feedback"].includes(state.currentRun.phase)));
   const activeMode = getActiveMode();
-  const activeModeError = ["demo", "endless"].includes(activeMode) ? null : activeMode === "quiz"
-    ? state.quizLeaderboardError
-    : activeMode === "quick"
-      ? state.quickQuizError
-      : state.scheduleError;
-  const activeModeLoaded = ["demo", "endless"].includes(activeMode) ? true : activeMode === "quiz"
-    ? state.quizLeaderboardLoaded
-    : activeMode === "quick"
-      ? state.quickQuizLoaded
-      : state.scheduleLoaded;
-
-  if (!state.catalogLoaded || !activeModeLoaded) {
+  if (!state.catalogLoaded) {
     appRoot.innerHTML = renderCatalogStateView({
-      title: activeMode === "endless" ? "Preparing Endless Mode" : activeMode === "demo" ? "Preparing collaborator game" : activeMode === "quick" ? "Loading 4.0 quick quiz" : activeMode === "quiz" ? "Loading learning quiz" : "Loading Friday lineup",
-      description:
-        activeMode === "quick"
-          ? "Preparing the selected 4.0 quiz videos and its separate statistics category."
-          : activeMode === "quiz"
-            ? "Preparing the full catalog and separate learning-quiz leaderboard."
-          : "Preparing the shared Friday 15-video lineup and weekly leaderboard reset state.",
+      title: activeMode === "endless" ? "Preparing Endless Mode" : "Preparing collaborator game",
+      description: "Loading the 100-video catalog, with events from all four sets.",
     });
     helpRoot.innerHTML = "";
     analysisRoot.innerHTML = "";
     return;
   }
 
-  if (state.catalogError || activeModeError) {
+  if (state.catalogError) {
     appRoot.innerHTML = renderCatalogStateView({
       title: "Video catalog unavailable",
-      description: state.catalogError || activeModeError,
+      description: state.catalogError,
     });
     helpRoot.innerHTML = "";
     analysisRoot.innerHTML = "";
@@ -760,37 +727,17 @@ function renderLandingView() {
   const activeMode = getActiveMode();
   const leaderboard = buildLeaderboard(getPlayersForMode(activeMode), activeMode);
   const hasLeaderboard = leaderboard.length > 0;
-  const marketSection = getSectionById("market");
-  const marketClipCount = marketSection ? getSectionQuestionCount(marketSection) : 0;
-  const cycleStartLabel = formatCycleDate(state.activeCycleStart);
-  const cycleEndLabel = formatCycleDate(state.activeCycleEnd);
-
   const modeSpecificContent = activeMode === "endless"
     ? renderEndlessLandingContent()
-    : activeMode === "demo"
-    ? renderDemoLandingContent()
-    : activeMode === "quiz"
-    ? renderLearningQuizLandingContent({ leaderboard, hasLeaderboard })
-    : activeMode === "quick"
-      ? renderQuickQuizLandingContent({ leaderboard, hasLeaderboard })
-      : renderFridayLandingContent({
-      leaderboard,
-      hasLeaderboard,
-      marketClipCount,
-      cycleStartLabel,
-      cycleEndLabel,
-    });
+    : renderDemoLandingContent();
 
   return `
-    <section class="welcome-layout appear ${activeMode === "quick" ? "quick-quiz-landing" : ""}">
+    <section class="welcome-layout appear">
       <article class="panel hero-card">
         <div class="panel-inner">
           <div class="mode-switcher">
             ${renderModeToggleButton("demo", "Collaborator Game", "All sets • full game experience")}
             ${renderModeToggleButton("endless", "Endless Mode", "Keep going • save & resume")}
-            ${renderModeToggleButton("friday", "Friday Lineup", "Shared weekly run")}
-            ${renderModeToggleButton("quiz", "Learning Quiz", "10 videos at once")}
-            ${renderModeToggleButton("quick", "4.0 Quick Quiz", "Selected videos, one at a time")}
           </div>
           ${modeSpecificContent.hero}
         </div>
@@ -800,7 +747,7 @@ function renderLandingView() {
         <div class="panel-inner">
           <div class="table-caption">
             <div>
-              <p class="eyebrow">${activeMode === "demo" ? "Global standings" : activeMode === "quick" ? "4.0 Standings" : activeMode === "quiz" ? "Learning Board" : "Live Board"}</p>
+              <p class="eyebrow">${activeMode === "demo" ? "Global standings" : "Live Board"}</p>
               <h2 class="card-title">${MODE_CONFIGS[activeMode].leaderboardTitle}</h2>
             </div>
             <span class="pill-note">${activeMode === "demo" && !state.collaboratorLeaderboardLoaded ? (state.collaboratorLeaderboardError ? "Unavailable" : "Loading") : hasLeaderboard
@@ -815,13 +762,7 @@ function renderLandingView() {
               : `
                 <div class="empty-state">
                   <p class="empty-state-copy">
-                    ${activeMode === "endless" ? "Make your first call to join the Endless leaderboard. Your lifetime progress carries over every time you return." : activeMode === "demo"
-                      ? "Finish a collaborator game to add your name, coin score, and accuracy to the global leaderboard."
-                      : activeMode === "quick"
-                      ? "Completed 4.0 quizzes will land here with their coin total, correct answers, accuracy, and completion time. This board stays separate from Friday and Learning Quiz results."
-                      : activeMode === "quiz"
-                        ? "Completed learning quizzes will land here with total correct, accuracy, and completion time."
-                      : "Completed runs will land here with the player name, coin score, and accuracy."}
+                    ${activeMode === "endless" ? "Make your first call to join the Endless leaderboard. Your lifetime progress carries over every time you return." : "Finish a collaborator game to add your name, coin score, and accuracy to the global leaderboard."}
                     ${activeMode === "demo" ? "Everyone sees the same collaborator standings across devices." : activeMode === "endless" ? "Endless scores stay separate from all other game modes." : "Analysis &amp; Export uses the same stored data for CSV downloads."}
                   </p>
                 </div>
@@ -1836,7 +1777,7 @@ function renderQuickQuizStatsOverview(players, history, nameKey = null) {
 }
 
 function getReportMode() {
-  return state.analysisMode || getActiveMode();
+  return PLAYABLE_MODES.includes(state.analysisMode) ? state.analysisMode : getActiveMode();
 }
 
 function getReportRecords(mode = getReportMode()) {
@@ -1975,7 +1916,7 @@ function getDetailedReportDefinitions(mode = getReportMode()) {
 
 function renderReportNavigation() {
   const mode = getReportMode();
-  return `<nav class="button-row report-navigation" aria-label="Report game mode">${["demo","friday","quiz","quick","endless"].map(id => `<button class="${id === mode ? "primary-button" : "ghost-button"}" data-action="select-analysis-mode" data-mode="${id}" aria-pressed="${id === mode}">${escapeHtml(MODE_CONFIGS[id]?.title || id)}</button>`).join("")}</nav><p class="subtle-copy">Viewing reports does not change your current game. Gameplay reports use the current score history. Activity reports include retained activity from before the reset.</p>`;
+  return `<nav class="button-row report-navigation" aria-label="Report game mode">${PLAYABLE_MODES.map(id => `<button class="${id === mode ? "primary-button" : "ghost-button"}" data-action="select-analysis-mode" data-mode="${id}" aria-pressed="${id === mode}">${escapeHtml(MODE_CONFIGS[id]?.title || id)}</button>`).join("")}</nav><p class="subtle-copy">Viewing reports does not change your current game. Gameplay reports use the current score history. Activity reports include retained activity from before the reset.</p>`;
 }
 
 function renderDetailedReports() {
@@ -2988,68 +2929,23 @@ function applyAnalyticsPayload(payload) {
 
 function beginRun(rawName, mode = "demo") {
   if (mode === "endless") { beginEndlessRun(rawName); return; }
+  // Old mode links and stale callers start the default collaborator game.
   const name = rawName.trim();
   const questionStartedAt = new Date().toISOString();
-  const normalizedMode = ["demo", "quiz", "quick", "endless"].includes(mode) ? mode : "friday";
-  const quickQuizSetup = normalizedMode === "quick" ? buildQuickQuizRun() : null;
-
   state.lastName = name;
-  saveStorage(STORAGE_KEYS.lastName, name);
-  state.selectedMode = normalizedMode;
-  saveStorage(STORAGE_KEYS.selectedMode, normalizedMode);
-
+  state.selectedMode = "demo";
   state.lastCompletedRun = null;
-  state.currentRun = normalizedMode === "quiz"
-    ? {
-      id: `quiz-run-${Date.now()}`,
-      mode: "quiz",
-      name,
-      nameKey: normalizeName(name),
-      videoOrder: buildQuizRunVideoOrder(),
-      quizChoices: {},
-      currentIndex: 0,
-      phase: "quiz-board",
-      answers: [],
-      startedAt: new Date().toISOString(),
-      questionStartedAt,
-    }
-    : normalizedMode === "quick"
-      ? {
-        id: `quick-quiz-run-${Date.now()}`,
-        mode: "quick",
-        name,
-        nameKey: normalizeName(name),
-        videoOrder: quickQuizSetup.videoOrder,
-        videoGroups: quickQuizSetup.videoGroups,
-        currentIndex: 0,
-        phase: "quick-question",
-        answers: [],
-        coins: null,
-        startedAt: new Date().toISOString(),
-        questionStartedAt,
-      }
-    : {
-      id: `run-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-      mode: normalizedMode,
-      name,
-      nameKey: normalizeName(name),
-      cycleStart: state.activeCycleStart,
-      videoOrder: buildRunVideoOrder(normalizedMode),
-      currentIndex: 0,
-      phase: "question",
-      answers: [],
-      coins: null,
-      startedAt: new Date().toISOString(),
-      questionStartedAt,
-    };
-
+  saveStorage(STORAGE_KEYS.lastName, name);
+  saveStorage(STORAGE_KEYS.selectedMode, "demo");
+  state.currentRun = {
+    id: `run-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    mode: "demo", name, nameKey: normalizeName(name),
+    videoOrder: buildRunVideoOrder("demo"), currentIndex: 0,
+    phase: "question", answers: [], coins: null,
+    startedAt: new Date().toISOString(), questionStartedAt,
+  };
   saveStorage(STORAGE_KEYS.currentRun, state.currentRun);
-  trackEvent("run_started", {
-    mode: normalizedMode,
-    nameKey: state.currentRun.nameKey,
-    runId: state.currentRun.id,
-    videoCount: getRunVideoCount(state.currentRun),
-  });
+  trackEvent("run_started", {mode:"demo",nameKey:state.currentRun.nameKey,runId:state.currentRun.id,videoCount:getRunVideoCount(state.currentRun)});
   render();
 }
 
@@ -4249,15 +4145,15 @@ function getQuickQuizReportRecords(records) {
 }
 
 function getActiveMode() {
-  if (state.currentRun?.mode) {
+  if (PLAYABLE_MODES.includes(state.currentRun?.mode)) {
     return state.currentRun.mode;
   }
 
-  if (state.lastCompletedRun?.mode) {
+  if (PLAYABLE_MODES.includes(state.lastCompletedRun?.mode)) {
     return state.lastCompletedRun.mode;
   }
 
-  return ["demo", "quiz", "quick", "friday", "endless"].includes(state.selectedMode) ? state.selectedMode : "demo";
+  return PLAYABLE_MODES.includes(state.selectedMode) ? state.selectedMode : "demo";
 }
 
 function selectMode(mode) {
@@ -4932,14 +4828,8 @@ function escapeHtml(value) {
 }
 
 function normalizeStoredRun(run) {
-  if (!run || typeof run !== "object") {
-    return null;
-  }
-
-  return {
-    ...run,
-    mode: ["demo", "quiz", "quick", "endless"].includes(run.mode) ? run.mode : "friday",
-  };
+  if (!run || typeof run !== "object" || !PLAYABLE_MODES.includes(run.mode)) return null;
+  return {...run};
 }
 
 function createSessionId() {

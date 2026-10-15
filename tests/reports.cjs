@@ -49,6 +49,7 @@ run(fs.readFileSync(path.join(__dirname,'../app.js'),'utf8').replace('\ninitiali
  assert.ok(run('renderAnalysisModal()').includes('Per-video responses'));
  assert.ok(run('renderAnalysisModal()').includes('Per-user performance'));
  assert.ok(run('renderAnalysisModal()').includes('select-analysis-mode'));
+ for(const retired of ['Friday Lineup','Learning Quiz','4.0 Quick Quiz']) assert.ok(!run('renderReportNavigation()').includes(retired),'Retired mode is absent from report navigation');
  run("downloadCsv('detail-answers')");
  const csv=await downloads.at(-1).text();
  assert.equal(csv.split('\n').length,7,'The actual download includes all answer rows');
@@ -60,10 +61,10 @@ run(fs.readFileSync(path.join(__dirname,'../app.js'),'utf8').replace('\ninitiali
  const calls=[];
  context.fetch=async(url)=>{calls.push(url);return {ok:true,json:async()=>url.includes('analytics')?{events:[],recentEvents:[],summary:{}}:{players:[],history:[],updatedAt:null}}};
  await run('syncAllDataFromServer({force:true})');
- assert.ok(calls.includes('/api/quiz-players?view=full'),'Switching reports loads full history for the selected mode');
+ assert.ok(calls.includes('/api/collaborator-players?view=full'),'Retired report selections fall back to Collaborator history');
  assert.ok(calls.includes('/api/analytics?view=full'),'All modes load the full retained activity window');
  assert.equal(run('state.currentRun.id'),'active-demo','Report browsing never replaces the active game');
- assert.equal(run('state.reportStatus.quiz'),'ready');
+ assert.equal(run('state.reportStatus.demo'),'ready');
  run(`state.analysisMode='endless';state.endlessPlayers=[{id:'endless',name:'Runner',nameKey:'runner',totalQuestions:250,totalCorrect:200,finalCoins:300}];state.savedEndlessRun={...state.endlessPlayers[0],mode:'endless',answers:[{videoId:'a',choice:'track',correct:true}]};`);
  assert.equal(run('getDetailedReportDefinitions().users.rows[0].questions'),250,'Endless totals do not use the trimmed review');
  assert.equal(run('getDetailedReportDefinitions().answers.rows.length'),1);

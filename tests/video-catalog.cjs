@@ -58,15 +58,11 @@ const verify = vm.runInContext(`(async () => {
   const order = buildRunVideoOrder('demo');
   order[0] = videos.find(video => video.sectionId === 'low-energy').id;
   check(!isCurrentRunCompatible({mode:'demo',videoOrder:order}), 'Research clips cannot enter a collaborator run');
-  const quiz = buildQuizRunVideoOrder().map(id => ALL_VIDEOS_BY_ID[id]);
-  check(quiz.length === 10 && quiz.filter(video => video.correctChoice === 'track').length === 5, 'Learning quiz remains balanced');
-  const quick = buildQuickQuizRun().videoOrder;
-  check(quick.length > 0 && quick.length === getQuickQuizVideoCount(), 'Quick quiz remains playable');
-  check(quick.every(id => ALL_VIDEOS_BY_ID[id].sectionId === 'low-energy'), 'Dedicated research quiz retains its own videos');
+  check(!PLAYABLE_MODES.includes('quick') && !PLAYABLE_MODES.includes('quiz'), 'Retired research modes cannot be selected');
   window.NEUTRINO_CONFIG = {videoBaseUrl:'https://media.example.test'};
   const clip = clips[0];
   const cdn = buildVideoUrl(MANIFEST_SOURCES[0].folderName, clip.id.slice(MANIFEST_SOURCES[0].folderName.length + 1));
   check(cdn === 'https://media.example.test/' + clip.src, 'Nested clip URLs support the media CDN');
 })()`, context);
-verify.then(()=>console.log('PASS: all 100 new clips, exact filenames and answer keys, four-set sampling, saved-run replacement, research quizzes and nested CDN URLs.'))
+verify.then(()=>console.log('PASS: all 100 new clips, exact filenames and answer keys, four-set sampling, saved-run replacement, retired mode removal and nested CDN URLs.'))
   .catch(error=>{console.error(error);process.exitCode=1;});
