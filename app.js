@@ -2,12 +2,34 @@ const STORAGE_KEYS = {
   currentRun: "game-that-neutrino-current-run",
   lastName: "game-that-neutrino-last-name",
   selectedMode: "game-that-neutrino-selected-mode",
+  demoPlayers: "game-that-neutrino-demo-players",
+  pendingCollaboratorRuns: "game-that-neutrino-collaborator-pending",
+  collaboratorMigration: "game-that-neutrino-collaborator-migrated-v1",
+  trophies: "game-that-neutrino-trophies-v1",
+  lastCompletedRun: "game-that-neutrino-last-completed",
+  completedRuns: "game-that-neutrino-recent-runs",
+  accountRevision: "game-that-neutrino-save-revision",
+  accountDirty: "game-that-neutrino-save-dirty",
+  savedEndlessRun: "game-that-neutrino-endless-run",
+  endlessOutbox: "game-that-neutrino-endless-outbox",
 };
+const GUEST_STORAGE_KEYS = {...STORAGE_KEYS};
+const ACCOUNT_OWNER_KEY = "game-that-neutrino-storage-owner";
+let progressStorageOwner = loadStorage(ACCOUNT_OWNER_KEY, null);
+configureProgressStorage(progressStorageOwner);
+
+function configureProgressStorage(owner) {
+  progressStorageOwner = typeof owner === "string" && /^[A-Za-z0-9_-]{3,32}$/.test(owner) ? owner : null;
+  for (const key of Object.keys(STORAGE_KEYS)) {
+    STORAGE_KEYS[key] = GUEST_STORAGE_KEYS[key] + (progressStorageOwner ? `-account-${progressStorageOwner.toLowerCase()}` : "");
+  }
+  localStorage.setItem(ACCOUNT_OWNER_KEY, JSON.stringify(progressStorageOwner));
+}
 
 function getRequestedMode() {
   const requestedMode = new URLSearchParams(window.location.search).get("mode");
 
-  return ["friday", "quiz", "quick"].includes(requestedMode)
+  return ["demo", "friday", "quiz", "quick", "endless"].includes(requestedMode)
     ? requestedMode
     : null;
 }
@@ -19,7 +41,8 @@ function getInitialSelectedMode() {
     return requestedMode;
   }
 
-  return loadStorage(STORAGE_KEYS.selectedMode, "friday");
+  if (loadStorage(STORAGE_KEYS.selectedMode, null) === "endless" && loadStorage(STORAGE_KEYS.savedEndlessRun, null)) return "endless";
+  return "demo";
 }
 
 function getInitialRun() {
@@ -28,7 +51,7 @@ function getInitialRun() {
 
   // A direct mode link should always open that mode. Keep another mode's saved
   // in-progress run in storage so it can be resumed by returning to its mode.
-  if (requestedMode && storedRun?.mode !== requestedMode) {
+  if (storedRun?.mode !== (requestedMode || getInitialSelectedMode())) {
     return null;
   }
 
@@ -36,15 +59,39 @@ function getInitialRun() {
 }
 
 const API_PLAYERS_URL = "/api/players";
+const API_COLLABORATOR_PLAYERS_URL = "/api/collaborator-players";
 const API_QUIZ_PLAYERS_URL = "/api/quiz-players";
 const API_QUICK_QUIZ_PLAYERS_URL = "/api/quick-quiz-players";
 const API_ANALYTICS_URL = "/api/analytics";
 const API_ANALYTICS_EVENTS_URL = "/api/analytics-events";
 const COIN_ICON_SRC = "coin.png";
 const VIDEO_PLAYBACK_RATE = 2;
-const PLAYER_SYNC_INTERVAL_MS = 60000;
-const ANALYTICS_FLUSH_INTERVAL_MS = 4000;
+const PLAYER_SYNC_INTERVAL_MS = 90000;
+const ANALYTICS_FLUSH_INTERVAL_MS = 30000;
 const RUN_VIDEO_COUNT = 15;
+const DEMO_VIDEO_COUNT = 5;
+const ACHIEVEMENTS = [
+  {id: "first-call", title: "First light", description: "Make your first correct call."},
+  {id: "hot-hand", title: "Hot hand", description: "Get three correct calls in a row."},
+  {id: "independent", title: "Against the crowd", description: "Earn a crowd bonus with a correct minority call."},
+  {id: "keen-eye", title: "Eye for both", description: "Correctly identify a Track and a Cascade in one run."},
+  {id: "demo-complete", title: "Collaborator", description: "Finish the five-question collaborator demo, whatever your score."},
+  {id: "perfect-demo", title: "Perfect five", description: "Finish a five-question collaborator game with every answer correct."},
+  {id: "finisher", title: "Mission complete", description: "Finish a run in any mode."},
+  {id: "explorer", title: "Ice explorer", description: "Finish a collaborator game covering all four video sets."},
+  {id: "endless-10", title: "Getting into orbit", description: "Answer 10 questions in one Endless run."},
+  {id: "endless-50", title: "Deep in the ice", description: "Answer 50 questions in one Endless run."},
+  {id: "endless-100", title: "Full rotation", description: "Answer 100 questions in one Endless run."},
+  {id: "endless-250", title: "Beyond the horizon", description: "Answer 250 questions in one Endless run."},
+  {id: "endless-streak-10", title: "Unbroken signal", description: "Make 10 correct calls in a row in Endless Mode."},
+  {id: "endless-correct-100", title: "Willem Trophy", description: "Make 100 correct calls in one Endless run."},
+];
+const CROWD_BONUS_COINS = 2;
+const DEMO_SECTION = {
+  id: "market", label: "Collaborator Game", title: "Trust your eye. Make the call.",
+  startIndex: 0, endIndex: DEMO_VIDEO_COUNT - 1, coinMode: true, publicLines: true,
+  description: "Watch the light pattern, then choose Track or Cascade. Public votes show the crowd’s opinion; your own observation makes the call.",
+};
 const QUIZ_VIDEO_COUNT = 10;
 const QUIZ_TRACK_COUNT = 5;
 const QUIZ_CASCADE_COUNT = 5;
@@ -60,23 +107,8 @@ const QUICK_QUIZ_GROUPS = [
 
 const MANIFEST_SOURCES = [
   {
-    folderName: "Group 1",
-    manifestFile: "Group1Manifest.csv",
-    sectionId: "market",
-  },
-  {
-    folderName: "Group 2",
-    manifestFile: "Group2Manifest.csv",
-    sectionId: "market",
-  },
-  {
-    folderName: "Group 3",
-    manifestFile: "Group3Manifest.csv",
-    sectionId: "market",
-  },
-  {
-    folderName: "Group 4",
-    manifestFile: "Group4Manifest.csv",
+    folderName: "ntn_4.0_100_videos (1)",
+    manifestFile: "manifest.csv",
     sectionId: "market",
   },
   {
@@ -123,6 +155,8 @@ const QUICK_QUIZ_BASELINE_RESULTS = {
 };
 const SEEDED_PUBLIC_LINE_COUNTS = {};
 const MODE_CONFIGS = {
+  endless: {id:"endless",title:"Endless Mode",leaderboardTitle:"Endless leaderboard",startButtonLabel:"Start endless run"},
+  demo: { id: "demo", title: "Collaborator Game", leaderboardTitle: "Global collaborator leaderboard", startButtonLabel: "Start collaborator game" },
   friday: {
     id: "friday",
     title: "Friday Lineup",
@@ -150,16 +184,34 @@ let VIDEOS = [];
 let VIDEOS_BY_ID = {};
 
 const state = {
+  showIntro: true,
+  showAchievements: false,
+  trophyProfiles: [],
+  localTrophies: loadStorage(STORAGE_KEYS.trophies, {}),
+  trophiesLoaded: false,
+  trophiesError: false,
+  trophyNotice: [],
+  demoPlayers: [],
+  demoHistory: [],
+  collaboratorLeaderboardLoaded: false,
+  collaboratorLeaderboardError: null,
+  collaboratorDataVersion: null,
+  pendingCollaboratorRuns: loadPendingCollaboratorRuns(),
   players: [],
   playerHistory: [],
   quizPlayers: [],
   quizHistory: [],
   quickQuizPlayers: [],
   quickQuizHistory: [],
+  endlessPlayers: [],
+  endlessLoaded: false,
+  endlessError: null,
+  savedEndlessRun: loadStorage(STORAGE_KEYS.savedEndlessRun, null),
+  pendingEndlessRuns: loadStorage(STORAGE_KEYS.endlessOutbox, []),
   currentRun: getInitialRun(),
   lastName: loadStorage(STORAGE_KEYS.lastName, ""),
   selectedMode: getInitialSelectedMode(),
-  lastCompletedRun: null,
+  lastCompletedRun: loadStorage(STORAGE_KEYS.lastCompletedRun, null),
   showHelp: false,
   showAnalysis: false,
   catalogLoaded: false,
@@ -191,14 +243,21 @@ let playerSyncTimerId = null;
 let analyticsFlushTimerId = null;
 const analyticsQueue = [];
 const videoAnalyticsTimestamps = new Map();
+const sharedRequests = new Map();
+const sharedRetryAfter = new Map();
+const lastModeSync = new Map();
+const recentlyAcceptedPlayers = new Map();
+let analyticsFlushing = false;
 
 render();
 void initializeVideoCatalog();
 initializeSharedPlayers();
 initializeAnalyticsTracking();
+if (Object.values(state.localTrophies).some(profile => !profile.synced)) void syncAchievements();
 
 document.addEventListener("click", (event) => {
   if (event.target.classList.contains("modal-backdrop")) {
+    if (state.showAchievements) { closeAchievements(); return; }
     state.showHelp = false;
     state.showAnalysis = false;
     render();
@@ -242,6 +301,29 @@ document.addEventListener("click", (event) => {
   const { action } = actionButton.dataset;
 
   switch (action) {
+    case "open-achievements":
+      state.showAchievements = true;
+      state.achievementReturnFocus = actionButton;
+      renderAchievementOverlays();
+      document.querySelector("#achievement-dialog")?.focus();
+      void syncAchievements();
+      break;
+    case "close-achievements":
+      closeAchievements();
+      break;
+    case "dismiss-trophies":
+      state.trophyNotice = [];
+      renderAchievementOverlays();
+      break;
+    case "open-intro":
+      state.showIntro = true;
+      render();
+      break;
+    case "close-intro":
+      state.showIntro = false;
+      render();
+      (document.querySelector("#player-name") || document.querySelector("#home-button"))?.focus();
+      break;
     case "go-home":
       trackEvent("go_home", {
         mode: getActiveMode(),
@@ -285,7 +367,7 @@ document.addEventListener("click", (event) => {
       state.showHelp = false;
       state.showAnalysis = true;
       render();
-      void syncAllDataFromServer();
+      void syncAllDataFromServer({force: true});
       break;
     case "close-analysis":
       state.showAnalysis = false;
@@ -331,6 +413,30 @@ document.addEventListener("submit", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (state.showIntro) {
+    if (event.key === "Escape") {
+      state.showIntro = false;
+      render();
+      (document.querySelector("#player-name") || document.querySelector("#home-button"))?.focus();
+    } else if (event.key === "Tab") {
+      const buttons = [...document.querySelectorAll("#intro-modal-root button, #intro-modal-root a")];
+      const first = buttons[0];
+      const last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
+    return;
+  }
+  if (state.showAchievements) {
+    if (event.key === "Escape") closeAchievements();
+    if (event.key === "Tab") {
+      const items = [...document.querySelectorAll("#achievement-dialog button, #achievement-dialog a")];
+      const first = items[0], last = items[items.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement.id === "achievement-dialog")) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
+    return;
+  }
   if (event.key === "Escape" && (state.showAnalysis || state.showHelp)) {
     state.showHelp = false;
     state.showAnalysis = false;
@@ -416,8 +522,8 @@ function buildVideoFromManifestRow(row, source, index) {
   return {
     id: `${source.folderName}/${fileName}`,
     label: eventId ? `Event ${eventId}` : `${source.folderName} Clip ${index + 1}`,
-    src: buildAssetUrl("videos", source.folderName, fileName),
-    sourceGroup: source.folderName,
+    src: buildVideoUrl(source.folderName, fileName),
+    sourceGroup: `${row.VideoSet || source.folderName}`.trim(),
     sectionId: source.sectionId,
     manifestIndex: index + 1,
     interactionType,
@@ -425,6 +531,15 @@ function buildVideoFromManifestRow(row, source, index) {
     pid: Number.isFinite(pidValue) ? pidValue : null,
     pidGroup: ["good", "uncertain", "bad"].includes(pidGroup) ? pidGroup : null,
   };
+}
+
+function buildVideoUrl(folderName, fileName) {
+  const base = window.NEUTRINO_CONFIG?.videoBaseUrl;
+  const asset = buildAssetUrl("videos", folderName, fileName);
+  // The same video paths work on the origin or a separately configured media CDN.
+  return typeof base === "string" && /^https:\/\//.test(base)
+    ? `${base.replace(/\/$/, "")}/${asset.replace(/^\.\//, "").replace(/^\//, "")}`
+    : asset;
 }
 
 function buildSections(videos) {
@@ -553,17 +668,24 @@ function extractEventId(fileName) {
 }
 
 function buildAssetUrl(...segments) {
-  return segments.map((segment) => encodeURIComponent(segment)).join("/");
+  return segments.flatMap((segment) => segment.split("/")).map(encodeURIComponent).join("/");
 }
 
 function render() {
+  if (typeof captureAccountProgress === "function") captureAccountProgress();
+  const viewKey = state.currentRun ? `${state.currentRun.id}:${state.currentRun.phase}:${state.currentRun.currentIndex}` : state.lastCompletedRun?.id || "home";
+  if (viewKey !== state.lastRenderedViewKey) { window.scrollTo?.({top: 0, behavior: "instant"}); state.lastRenderedViewKey = viewKey; }
+  renderIntro();
+  renderAchievementOverlays();
+  if (typeof renderAccountControls === "function") renderAccountControls();
+  document.body.classList.toggle("is-playing", Boolean(state.currentRun && ["question", "quick-question", "feedback", "quick-feedback"].includes(state.currentRun.phase)));
   const activeMode = getActiveMode();
-  const activeModeError = activeMode === "quiz"
+  const activeModeError = ["demo", "endless"].includes(activeMode) ? null : activeMode === "quiz"
     ? state.quizLeaderboardError
     : activeMode === "quick"
       ? state.quickQuizError
       : state.scheduleError;
-  const activeModeLoaded = activeMode === "quiz"
+  const activeModeLoaded = ["demo", "endless"].includes(activeMode) ? true : activeMode === "quiz"
     ? state.quizLeaderboardLoaded
     : activeMode === "quick"
       ? state.quickQuizLoaded
@@ -571,7 +693,7 @@ function render() {
 
   if (!state.catalogLoaded || !activeModeLoaded) {
     appRoot.innerHTML = renderCatalogStateView({
-      title: activeMode === "quick" ? "Loading 4.0 quick quiz" : activeMode === "quiz" ? "Loading learning quiz" : "Loading Friday lineup",
+      title: activeMode === "endless" ? "Preparing Endless Mode" : activeMode === "demo" ? "Preparing collaborator game" : activeMode === "quick" ? "Loading 4.0 quick quiz" : activeMode === "quiz" ? "Loading learning quiz" : "Loading Friday lineup",
       description:
         activeMode === "quick"
           ? "Preparing the selected 4.0 quiz videos and its separate statistics category."
@@ -630,7 +752,11 @@ function renderLandingView() {
   const cycleStartLabel = formatCycleDate(state.activeCycleStart);
   const cycleEndLabel = formatCycleDate(state.activeCycleEnd);
 
-  const modeSpecificContent = activeMode === "quiz"
+  const modeSpecificContent = activeMode === "endless"
+    ? renderEndlessLandingContent()
+    : activeMode === "demo"
+    ? renderDemoLandingContent()
+    : activeMode === "quiz"
     ? renderLearningQuizLandingContent({ leaderboard, hasLeaderboard })
     : activeMode === "quick"
       ? renderQuickQuizLandingContent({ leaderboard, hasLeaderboard })
@@ -647,6 +773,8 @@ function renderLandingView() {
       <article class="panel hero-card">
         <div class="panel-inner">
           <div class="mode-switcher">
+            ${renderModeToggleButton("endless", "Endless Mode", "Keep going • save & resume")}
+            ${renderModeToggleButton("demo", "Collaborator Game", "All sets • full game experience")}
             ${renderModeToggleButton("friday", "Friday Lineup", "Shared weekly run")}
             ${renderModeToggleButton("quiz", "Learning Quiz", "10 videos at once")}
             ${renderModeToggleButton("quick", "4.0 Quick Quiz", "Selected videos, one at a time")}
@@ -659,26 +787,29 @@ function renderLandingView() {
         <div class="panel-inner">
           <div class="table-caption">
             <div>
-              <p class="eyebrow">${activeMode === "quick" ? "4.0 Standings" : activeMode === "quiz" ? "Learning Board" : "Live Board"}</p>
+              <p class="eyebrow">${activeMode === "demo" ? "Global standings" : activeMode === "quick" ? "4.0 Standings" : activeMode === "quiz" ? "Learning Board" : "Live Board"}</p>
               <h2 class="card-title">${MODE_CONFIGS[activeMode].leaderboardTitle}</h2>
             </div>
-            <span class="pill-note">${hasLeaderboard
-              ? `${leaderboard.length} completed player${leaderboard.length === 1 ? "" : "s"}`
-              : "Waiting on first finish"}</span>
+            <span class="pill-note">${activeMode === "demo" && !state.collaboratorLeaderboardLoaded ? (state.collaboratorLeaderboardError ? "Unavailable" : "Loading") : hasLeaderboard
+              ? `${leaderboard.length} ${activeMode === "endless" ? "" : "completed "}player${leaderboard.length === 1 ? "" : "s"}`
+              : activeMode === "endless" ? "Waiting on first call" : "Waiting on first finish"}</span>
           </div>
 
+          ${activeMode === "demo" ? renderCollaboratorSyncStatus() : activeMode === "endless" ? renderEndlessSyncStatus() : ""}
           ${
             hasLeaderboard
-              ? renderLeaderboardTable(leaderboard, null, activeMode)
+              ? (activeMode === "endless" ? renderEndlessLeaderboard(leaderboard) : renderLeaderboardTable(leaderboard, null, activeMode))
               : `
                 <div class="empty-state">
                   <p class="empty-state-copy">
-                    ${activeMode === "quick"
+                    ${activeMode === "endless" ? "Make your first call to join the Endless leaderboard. Your best run counts, and saved checkpoints update while you play." : activeMode === "demo"
+                      ? "Finish a collaborator game to add your name, coin score, and accuracy to the global leaderboard."
+                      : activeMode === "quick"
                       ? "Completed 4.0 quizzes will land here with their coin total, correct answers, accuracy, and completion time. This board stays separate from Friday and Learning Quiz results."
                       : activeMode === "quiz"
                         ? "Completed learning quizzes will land here with total correct, accuracy, and completion time."
                       : "Completed runs will land here with the player name, coin score, and accuracy."}
-                    Analysis &amp; Export uses the same stored data for CSV downloads.
+                    ${activeMode === "demo" ? "Everyone sees the same collaborator standings across devices." : activeMode === "endless" ? "Endless scores stay separate from all other game modes." : "Analysis &amp; Export uses the same stored data for CSV downloads."}
                   </p>
                 </div>
               `
@@ -854,9 +985,7 @@ function renderQuickQuizLandingContent({ leaderboard, hasLeaderboard }) {
 }
 
 function renderStartForm({ buttonLabel, helperCopy }) {
-  const nameLabel = getActiveMode() === "quick"
-    ? "Enter a name to save your personal statistics."
-    : "Enter a name to save results to the leaderboard.";
+  const nameLabel = "Enter your name";
 
   return `
     <div class="form-shell">
@@ -869,7 +998,7 @@ function renderStartForm({ buttonLabel, helperCopy }) {
           type="text"
           maxlength="40"
           autocomplete="name"
-          placeholder="Your classifier name"
+          placeholder="Your name"
           value="${escapeHtml(state.lastName)}"
           required
         />
@@ -887,6 +1016,7 @@ function renderStartForm({ buttonLabel, helperCopy }) {
 }
 
 function renderRunView(run) {
+  if (run.mode === "endless") return renderEndlessRunView(run);
   if (run.mode === "quiz") {
     return run.phase === "quiz-results"
       ? renderLearningQuizResultsView(run)
@@ -941,10 +1071,13 @@ function renderQuickQuizQuestionView(run) {
 
         <div class="play-stage quick-quiz-stage">
           <div class="video-shell game-video-shell">
-            <video controls muted playsinline preload="metadata" src="${video.src}"></video>
+            <video controls autoplay loop muted playsinline preload="metadata" data-autoplay="true" src="${video.src}"></video>
+
           </div>
 
           <div class="decision-card quick-quiz-decision">
+
+            ${renderMobileVoteContext(lines)}
             <div class="round-note">
               <strong>What type of event is this?</strong>
             </div>
@@ -999,6 +1132,7 @@ function renderQuickQuizFeedbackView(run) {
             : ""
         }
 
+        ${renderCrowdBonusFeedback(answer)}
         <div class="feedback-grid">
           <div class="feedback-card"><span>Coin movement</span><strong>${coinDelta > 0 ? "+" : ""}${coinDelta} coins</strong><p>Your bank is now ${answer.coinsAfter} coins.</p></div>
           <div class="feedback-card"><span>Wager</span><strong>${answer.doubleDown ? "Double or Nothing" : "Standard"}</strong><p>${answer.streakBonusApplied ? "Hot-hand bonus applied." : "One video at a time."}</p></div>
@@ -1136,7 +1270,8 @@ function renderQuizVideoCard(run, videoId, index) {
       </div>
 
       <div class="video-shell quiz-video-shell">
-        <video controls muted playsinline preload="metadata" src="${video.src}"></video>
+        <video controls loop muted playsinline preload="metadata" src="${video.src}"></video>
+
       </div>
 
       <div class="quiz-choice-grid">
@@ -1199,6 +1334,7 @@ function renderLearningQuizResultsView(run) {
             <div class="summary-card"><span>Track pool</span><strong>${stats.sectionStats.track.correct} / ${stats.sectionStats.track.total}</strong><p>Track examples correctly identified in this run.</p></div>
             <div class="summary-card"><span>Cascade pool</span><strong>${stats.sectionStats.cascade.correct} / ${stats.sectionStats.cascade.total}</strong><p>Cascade examples correctly identified in this run.</p></div>
           </div>
+          ${renderRunInsights(run)}
           <div class="button-row"><button type="button" class="primary-button" data-action="play-again">Start another learning quiz</button><button type="button" class="secondary-button" data-action="open-analysis">Open analysis</button></div>
           <div class="quiz-review-grid">${run.answers.map((answer) => renderQuizReviewCard(answer)).join("")}</div>
         </div>
@@ -1257,6 +1393,7 @@ function renderQuickQuizResultsView(run) {
             </div>
           </div>
 
+          ${renderRunInsights(run)}
           <div class="button-row">
             <button type="button" class="primary-button" data-action="play-again">Start another 4.0 quiz</button>
             <button type="button" class="secondary-button" data-action="open-analysis">Open 4.0 exports</button>
@@ -1303,7 +1440,7 @@ function renderQuizReviewCard(answer) {
       </div>
 
       <div class="video-shell quiz-video-shell">
-        <video controls muted playsinline preload="metadata" src="${answer.videoSrc}"></video>
+        <video controls loop muted playsinline preload="metadata" src="${escapeHtml(answer.videoSrc || ALL_VIDEOS_BY_ID[answer.videoId]?.src || "")}"></video>
       </div>
 
       <div class="quiz-review-meta">
@@ -1323,13 +1460,13 @@ function renderQuizReviewCard(answer) {
 }
 
 function renderQuestionView(run) {
-  const section = getSectionForIndex(run.currentIndex);
+  const section = run.mode === "demo" ? DEMO_SECTION : getSectionForIndex(run.currentIndex);
   const video = getVideoForRunIndex(run, run.currentIndex);
   const currentCoins = getVisibleCoins(run, section);
   const questionInSection = run.currentIndex - section.startIndex + 1;
   const sectionQuestionCount = getRunVideoCount(run);
   const overallQuestionNumber = run.currentIndex + 1;
-  const lines = section.publicLines ? getPublicLines(video.id, state.players) : null;
+  const lines = section.publicLines ? getPublicLines(video.id, getCrowdPlayers(run.mode)) : null;
 
   return `
     <section class="panel appear game-panel">
@@ -1371,12 +1508,15 @@ function renderQuestionView(run) {
             </div>
 
             <div class="video-shell game-video-shell">
-              <video controls autoplay muted playsinline preload="metadata" data-autoplay="true" src="${video.src}"></video>
+              <video controls autoplay loop muted playsinline preload="metadata" data-autoplay="true" src="${video.src}"></video>
+
             </div>
           </div>
 
           <div class="decision-column">
             <div class="decision-card ${section.publicLines ? "decision-card-market" : ""}">
+
+              ${renderMobileVoteContext(lines)}
               <div class="round-note">
                 <strong>${questionInSection === 1 ? "Run briefing" : "Run rules"}</strong>
                 <p class="subtle-copy decision-copy">${section.description}</p>
@@ -1425,8 +1565,8 @@ function renderQuestionView(run) {
             <div class="decision-meta-grid">
               <div class="mini-card compact-card">
                 <span>Scoring mode</span>
-                <strong>Group 3 live</strong>
-                <p>Correct picks add 1 coin and wrong picks lose 1 coin. After 2 straight correct picks, each next consecutive correct pick earns 2 coins until the streak breaks. Double or Nothing changes one clip to -2 on a miss, +2 on a normal hit, or +3 on a streak hit.</p>
+                <strong>Coins, streaks &amp; crowd bonus</strong>
+                <p>Correct picks add 1 coin and wrong picks lose 1 coin. After 2 straight correct picks, each next consecutive correct pick earns 2 coins until the streak breaks. Double or Nothing changes one clip to -2 on a miss, +2 on a normal hit, or +3 on a streak hit. Choosing an answer with under 25% of recorded votes adds +2 coins only when your answer is correct.</p>
               </div>
               <div class="mini-card compact-card">
                 <span>Public line</span>
@@ -1448,7 +1588,7 @@ function renderFeedbackView(run) {
   const nextLabel = isFinalQuestion ? "Finish and show leaderboard" : "Next video";
   const expectedChoice = getExpectedChoice(answer.videoId) || answer.choice;
   const answerSection = getSectionById(answer.sectionId);
-  const sectionQuestionCount = answerSection
+  const sectionQuestionCount = run.mode === "demo" ? getRunVideoCount(run) : answerSection
     ? getSectionQuestionCount(answerSection)
     : answer.sectionQuestionNumber;
   const feedbackSummary = answer.correct
@@ -1478,6 +1618,7 @@ function renderFeedbackView(run) {
           </div>
         </div>
 
+        ${renderCrowdBonusFeedback(answer)}
         <div class="feedback-grid">
           <div class="feedback-card">
             <span>Player choice</span>
@@ -1517,6 +1658,7 @@ function renderFeedbackView(run) {
 }
 
 function renderResultsView(run) {
+  if (run.mode === "endless") return renderEndlessResultsView(run);
   if (run.mode === "quiz") {
     return renderLearningQuizResultsView(run);
   }
@@ -1525,7 +1667,7 @@ function renderResultsView(run) {
     return renderQuickQuizResultsView(run);
   }
 
-  const leaderboard = buildLeaderboard(state.players);
+  const leaderboard = buildLeaderboard(getPlayersForMode(run.mode));
   const stats = calculateRunStats(run.answers);
   const marketStats = stats.sectionStats.market || {
     correct: 0,
@@ -1542,8 +1684,7 @@ function renderResultsView(run) {
               <p class="eyebrow">Run Complete</p>
               <h2 class="score-title">${escapeHtml(run.name)} finished all ${getRunVideoCount(run)} sampled videos</h2>
               <p class="hero-copy">
-                The score below has been written into the shared leaderboard, and the full answer
-                breakdown is available in the analysis export modal.
+                ${run.mode === "demo" ? getCollaboratorRunStatus(run) : "Your score is saved in the shared leaderboard. Open Analysis &amp; Export for the answer breakdown."}
               </p>
             </div>
 
@@ -1562,15 +1703,16 @@ function renderResultsView(run) {
             <div class="summary-card">
               <span>Public lines</span>
               <strong>${formatPercent(marketStats.accuracy)}</strong>
-              <p>${marketStats.correct} of ${marketStats.total} correct in Group 3 mode.</p>
+              <p>${marketStats.correct} of ${marketStats.total} correct with coins and public lines.</p>
             </div>
             <div class="summary-card">
               <span>Sample size</span>
               <strong>${getRunVideoCount(run)}</strong>
-              <p>Random clips drawn from the ${VIDEOS.length}-video catalog.</p>
+              <p>Random clips drawn from the ${run.mode === "demo" ? getCollaboratorVideos().length : VIDEOS.length}-video catalog.</p>
             </div>
           </div>
 
+          ${renderRunInsights(run)}
           <div class="button-row">
             <button type="button" class="primary-button" data-action="play-again">Start another run</button>
             <button type="button" class="secondary-button" data-action="open-analysis">Open analysis</button>
@@ -1587,6 +1729,7 @@ function renderResultsView(run) {
             </div>
             <span class="pill-note">${leaderboard.length} completed player${leaderboard.length === 1 ? "" : "s"}</span>
           </div>
+          ${run.mode === "demo" ? renderCollaboratorSyncStatus() : ""}
           ${renderLeaderboardTable(leaderboard, run.nameKey, "friday")}
         </div>
       </aside>
@@ -1680,6 +1823,10 @@ function renderQuickQuizStatsOverview(players, history, nameKey = null) {
 }
 
 function renderAnalysisModal() {
+  if (state.showAnalysis && getActiveMode() === "endless") return renderAnalysisModalShell({eyebrow:"Endless Mode",title:"Endless leaderboard",description:"Best run per player, ranked by correct calls, then accuracy and coins. In-progress checkpoints count.",body:renderEndlessSyncStatus()+renderEndlessLeaderboard()});
+  if (state.showAnalysis && getActiveMode() === "demo") {
+    return renderAnalysisModalShell({ eyebrow: "Presentation mode", title: "Global collaborator results", description: "Collaborator scores are shared across devices. Research quiz results remain in their own categories.", body: renderCollaboratorSyncStatus() + renderLeaderboardTable(buildLeaderboard(state.demoPlayers), null, "demo") });
+  }
   if (!state.showAnalysis) {
     return "";
   }
@@ -2187,6 +2334,7 @@ function renderHelpModal() {
             </div>
           </section>
 
+          <section class="panel"><div class="panel-inner"><p class="eyebrow">Coin game rules</p>${renderGameMechanics()}</div></section>
           <section class="panel">
             <div class="panel-inner help-tips-grid">
               <div class="help-tip-card">
@@ -2262,9 +2410,10 @@ function renderChoiceButton({
   totalResponses,
 }) {
   const hasPublicLine = typeof percentage === "number";
+  const bonus = state.currentRun?.mode === "endless" ? 0 : getCrowdBonus(getCurrentChoiceLines(), choice, true);
   const responsesLabel = totalResponses
     ? `${totalResponses} public pick${totalResponses === 1 ? "" : "s"}`
-    : "opens at 50/50 if no public picks are stored yet";
+    : "reference estimate when available; otherwise 50/50. No live votes yet";
 
   return `
     <button
@@ -2277,6 +2426,7 @@ function renderChoiceButton({
         ${hasPublicLine ? `<span class="choice-percent">${formatPercent(percentage)}</span>` : ""}
       </div>
       <span class="choice-description">${description}</span>
+      ${bonus ? `<span class="crowd-bonus-tag">Correct minority call · +${bonus}</span>` : ""}
       ${
         hasPublicLine
           ? `
@@ -2304,6 +2454,7 @@ function initializeAutoplayVideos() {
     video.muted = true;
     video.defaultMuted = true;
     video.playsInline = true;
+    video.loop = true;
     applyPlaybackRate();
 
     video.onloadedmetadata = applyPlaybackRate;
@@ -2352,6 +2503,7 @@ function renderLineCard(label, percentage, fillClass, totalResponses) {
 }
 
 function goHome() {
+  if (state.currentRun?.mode === "endless") { pauseEndlessRun(); return; }
   state.showHelp = false;
   state.showAnalysis = false;
 
@@ -2368,46 +2520,76 @@ function goHome() {
 
 function initializeSharedPlayers() {
   void syncAllDataFromServer();
-
   if (!playerSyncTimerId) {
+    // Each browser gets a different schedule, avoiding a synchronized refresh burst.
     playerSyncTimerId = window.setInterval(() => {
-      if (!state.currentRun) {
-        void syncAllDataFromServer();
-      }
-    }, PLAYER_SYNC_INTERVAL_MS);
+      if (document.visibilityState !== "hidden" && !state.currentRun) void syncAllDataFromServer();
+    }, PLAYER_SYNC_INTERVAL_MS + Math.floor(Math.random() * 30000));
   }
-
   window.addEventListener("focus", () => {
-    if (!state.currentRun) {
-      void syncAllDataFromServer();
-    }
+    if (!state.currentRun) void syncAllDataFromServer();
   });
 }
 
-async function syncAllDataFromServer() {
-  await Promise.all([
-    syncPlayersFromServer(),
-    syncQuizPlayersFromServer(),
-    syncQuickQuizPlayersFromServer(),
-    syncAnalyticsFromServer(),
-  ]);
+async function fetchSharedJson(url) {
+  const key = url;
+  if (sharedRequests.has(key)) return sharedRequests.get(key);
+  if ((sharedRetryAfter.get(key) || 0) > Date.now()) throw new Error("Shared data is busy; retrying shortly.");
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timeout = controller ? window.setTimeout(() => controller.abort(), 20000) : null;
+  const pending = (async () => {
+    try {
+      const response = await fetch(url, {cache: "no-cache", ...(controller ? {signal: controller.signal} : {})});
+      if (!response.ok) {
+        const wait = Number(response.headers?.get("Retry-After")) || 15;
+        sharedRetryAfter.set(key, Date.now() + Math.min(300, Math.max(5, wait)) * 1000);
+        throw new Error(`Shared data unavailable (${response.status}). Retrying shortly.`);
+      }
+      sharedRetryAfter.delete(key);
+      return await response.json();
+    } finally {
+      if (timeout !== null) window.clearTimeout(timeout);
+      sharedRequests.delete(key);
+    }
+  })();
+  sharedRequests.set(key, pending);
+  return pending;
+}
+
+async function fetchLeaderboardData(url, mode) {
+  const full = state.showAnalysis;
+  const payload = await fetchSharedJson(full ? `${url}?view=full` : url);
+  if (full && !Array.isArray(payload.history)) {
+    const history = [];
+    let cursor = null;
+    do {
+      const page = await fetchSharedJson(`/api/history?mode=${mode}${cursor ? `&cursor=${encodeURIComponent(JSON.stringify(cursor))}` : ""}`);
+      history.push(...page.history);
+      cursor = page.nextCursor;
+    } while (cursor);
+    payload.history = history;
+  }
+  return payload;
+}
+
+async function syncAllDataFromServer({force = false} = {}) {
+  const mode = getActiveMode();
+  const key = `${mode}:${state.showAnalysis}`;
+  const pendingUpload = mode === "demo" && state.pendingCollaboratorRuns.length;
+  if (!force && !pendingUpload && Date.now() - (lastModeSync.get(key) || 0) < 15000) return;
+  lastModeSync.set(key, Date.now());
+  const sync = {endless: () => syncEndlessFromServer({refresh:true}), demo: syncCollaboratorPlayersFromServer, friday: syncPlayersFromServer,
+    quiz: syncQuizPlayersFromServer, quick: syncQuickQuizPlayersFromServer}[mode];
+  await Promise.all([sync(), ...(state.showAnalysis && !["demo", "endless"].includes(mode) ? [syncAnalyticsFromServer()] : [])]);
 }
 
 async function syncLeaderboardsFromServer() {
-  await Promise.all([syncPlayersFromServer(), syncQuizPlayersFromServer(), syncQuickQuizPlayersFromServer()]);
+  await syncAllDataFromServer({force: true});
 }
 
 async function syncPlayersFromServer() {
   try {
-    const response = await fetch(`${API_PLAYERS_URL}?t=${Date.now()}`, {
-      cache: "no-store",
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to load shared players: ${response.status}`);
-    }
-
-    const payload = await response.json();
+    const payload = await fetchLeaderboardData(API_PLAYERS_URL, "friday");
     const dataVersion = typeof payload.updatedAt === "string" ? payload.updatedAt : null;
     const dataChanged = !state.scheduleLoaded || state.fridayDataVersion !== dataVersion;
     applyFridayPayload(payload);
@@ -2419,7 +2601,7 @@ async function syncPlayersFromServer() {
       state.currentRun && !isCurrentRunCompatible(state.currentRun),
     );
 
-    if (dataChanged && (!state.currentRun || state.showAnalysis || state.lastCompletedRun || runBecameInvalid)) {
+    if ((dataChanged || state.showAnalysis) && (!state.currentRun || state.showAnalysis || state.lastCompletedRun || runBecameInvalid)) {
       render();
     }
   } catch (error) {
@@ -2428,21 +2610,13 @@ async function syncPlayersFromServer() {
     state.scheduleError = error instanceof Error
       ? error.message
       : "Couldn't load the shared Friday lineup.";
-    render();
+    if (!state.currentRun || state.showAnalysis || state.lastCompletedRun) render();
   }
 }
 
 async function syncQuizPlayersFromServer() {
   try {
-    const response = await fetch(`${API_QUIZ_PLAYERS_URL}?t=${Date.now()}`, {
-      cache: "no-store",
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to load learning-quiz players: ${response.status}`);
-    }
-
-    const payload = await response.json();
+    const payload = await fetchLeaderboardData(API_QUIZ_PLAYERS_URL, "quiz");
     const dataVersion = typeof payload.updatedAt === "string" ? payload.updatedAt : null;
     const dataChanged = !state.quizLeaderboardLoaded || state.quizDataVersion !== dataVersion;
     applyQuizPayload(payload);
@@ -2450,7 +2624,7 @@ async function syncQuizPlayersFromServer() {
     state.quizLeaderboardError = null;
     state.quizDataVersion = dataVersion;
 
-    if (dataChanged && (!state.currentRun || state.showAnalysis || state.lastCompletedRun)) {
+    if ((dataChanged || state.showAnalysis) && (!state.currentRun || state.showAnalysis || state.lastCompletedRun)) {
       render();
     }
   } catch (error) {
@@ -2459,19 +2633,13 @@ async function syncQuizPlayersFromServer() {
     state.quizLeaderboardError = error instanceof Error
       ? error.message
       : "Couldn't load the learning quiz leaderboard.";
-    render();
+    if (!state.currentRun || state.showAnalysis || state.lastCompletedRun) render();
   }
 }
 
 async function syncQuickQuizPlayersFromServer() {
   try {
-    const response = await fetch(`${API_QUICK_QUIZ_PLAYERS_URL}?t=${Date.now()}`, { cache: "no-store" });
-
-    if (!response.ok) {
-      throw new Error(`Failed to load 4.0 quick-quiz statistics: ${response.status}`);
-    }
-
-    const payload = await response.json();
+    const payload = await fetchLeaderboardData(API_QUICK_QUIZ_PLAYERS_URL, "quick");
     const dataVersion = typeof payload.updatedAt === "string" ? payload.updatedAt : null;
     const dataChanged = !state.quickQuizLoaded || state.quickQuizDataVersion !== dataVersion;
     applyQuickQuizPayload(payload);
@@ -2479,31 +2647,24 @@ async function syncQuickQuizPlayersFromServer() {
     state.quickQuizError = null;
     state.quickQuizDataVersion = dataVersion;
 
-    if (dataChanged && (!state.currentRun || state.showAnalysis || state.lastCompletedRun)) {
+    if ((dataChanged || state.showAnalysis) && (!state.currentRun || state.showAnalysis || state.lastCompletedRun)) {
       render();
     }
   } catch (error) {
     console.error(error);
     state.quickQuizLoaded = true;
     state.quickQuizError = error instanceof Error ? error.message : "Couldn't load the 4.0 quick-quiz statistics.";
-    render();
+    if (!state.currentRun || state.showAnalysis || state.lastCompletedRun) render();
   }
 }
 
 async function syncAnalyticsFromServer() {
   try {
-    const response = await fetch(`${API_ANALYTICS_URL}?t=${Date.now()}`, {
-      cache: "no-store",
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to load analytics: ${response.status}`);
-    }
-
-    const payload = await response.json();
+    const payload = await fetchSharedJson(API_ANALYTICS_URL);
     applyAnalyticsPayload(payload);
     state.analyticsLoaded = true;
     state.analyticsError = null;
+    if (state.showAnalysis) render();
   } catch (error) {
     console.error(error);
     state.analyticsLoaded = true;
@@ -2583,35 +2744,60 @@ async function uploadQuickQuizPlayerRecord(playerRecord) {
   return response.json();
 }
 
+function applyBoardData(payload, playersKey, historyKey) {
+  const confirmed = recentlyAcceptedPlayers.get(playersKey) || new Map();
+  for (const [key, accepted] of confirmed) {
+    if (accepted.expires <= Date.now()) confirmed.delete(key);
+  }
+  if (payload.partial) {
+    for (const player of payload.players || []) confirmed.set(player.nameKey, {player, expires: Date.now() + 120000});
+  }
+  recentlyAcceptedPlayers.set(playersKey, confirmed);
+  if (Array.isArray(payload.players)) {
+    if (payload.partial) {
+      const players = new Map(state[playersKey].map(player => [player.nameKey, player]));
+      for (const player of payload.players) {
+        const previous = players.get(player.nameKey);
+        if (!previous || previous.completedAt <= player.completedAt) players.set(player.nameKey, player);
+      }
+      const crowdStats = state[playersKey].crowdStats;
+      state[playersKey] = [...players.values()];
+      if (crowdStats) state[playersKey].crowdStats = crowdStats;
+    } else {
+      const players = new Map(payload.players.map(player => [player.nameKey, player]));
+      // A cached read can briefly predate this browser's successful submission.
+      for (const {player} of confirmed.values()) {
+        if (playersKey === "players" && player.cycleStart && player.cycleStart !== payload.activeCycleStart) continue;
+        const previous = players.get(player.nameKey);
+        if (!previous || new Date(previous.completedAt) <= new Date(player.completedAt)) players.set(player.nameKey, player);
+      }
+      state[playersKey] = [...players.values()];
+    }
+  }
+  if (payload.crowdStats) state[playersKey].crowdStats = payload.crowdStats;
+  if (Array.isArray(payload.history)) {
+    state[historyKey] = payload.partial
+      ? [...new Map([...state[historyKey], ...payload.history].map(record => [record.id, record])).values()]
+      : payload.history;
+  }
+}
+
 function applyFridayPayload(payload) {
-  state.players = Array.isArray(payload.players) ? payload.players : [];
-  state.playerHistory = Array.isArray(payload.history) ? payload.history : [];
-  state.activeCycleStart = typeof payload.activeCycleStart === "string"
-    ? payload.activeCycleStart
-    : null;
-  state.activeCycleEnd = typeof payload.activeCycleEnd === "string"
-    ? payload.activeCycleEnd
-    : null;
-  state.activeVideoIds = Array.isArray(payload.activeVideoIds)
-    ? payload.activeVideoIds.filter((videoId) => typeof videoId === "string")
-    : [];
-  state.catalogSize = typeof payload.catalogSize === "number"
-    ? payload.catalogSize
-    : state.catalogSize;
+  applyBoardData(payload, "players", "playerHistory");
+  if (typeof payload.activeCycleStart === "string") state.activeCycleStart = payload.activeCycleStart;
+  if (typeof payload.activeCycleEnd === "string") state.activeCycleEnd = payload.activeCycleEnd;
+  if (Array.isArray(payload.activeVideoIds)) state.activeVideoIds = payload.activeVideoIds.filter(id => typeof id === "string");
+  if (typeof payload.catalogSize === "number") state.catalogSize = payload.catalogSize;
 }
 
 function applyQuizPayload(payload) {
-  state.quizPlayers = Array.isArray(payload.players) ? payload.players : [];
-  state.quizHistory = Array.isArray(payload.history) ? payload.history : [];
-  state.catalogSize = typeof payload.catalogSize === "number"
-    ? payload.catalogSize
-    : state.catalogSize;
+  applyBoardData(payload, "quizPlayers", "quizHistory");
+  if (typeof payload.catalogSize === "number") state.catalogSize = payload.catalogSize;
 }
 
 function applyQuickQuizPayload(payload) {
-  state.quickQuizPlayers = Array.isArray(payload.players) ? payload.players : [];
-  state.quickQuizHistory = Array.isArray(payload.history) ? payload.history : [];
-  state.catalogSize = typeof payload.catalogSize === "number" ? payload.catalogSize : state.catalogSize;
+  applyBoardData(payload, "quickQuizPlayers", "quickQuizHistory");
+  if (typeof payload.catalogSize === "number") state.catalogSize = payload.catalogSize;
 }
 
 function applyAnalyticsPayload(payload) {
@@ -2623,10 +2809,11 @@ function applyAnalyticsPayload(payload) {
     : [];
 }
 
-function beginRun(rawName, mode = "friday") {
+function beginRun(rawName, mode = "demo") {
+  if (mode === "endless") { beginEndlessRun(rawName); return; }
   const name = rawName.trim();
   const questionStartedAt = new Date().toISOString();
-  const normalizedMode = ["quiz", "quick"].includes(mode) ? mode : "friday";
+  const normalizedMode = ["demo", "quiz", "quick", "endless"].includes(mode) ? mode : "friday";
   const quickQuizSetup = normalizedMode === "quick" ? buildQuickQuizRun() : null;
 
   state.lastName = name;
@@ -2665,12 +2852,12 @@ function beginRun(rawName, mode = "friday") {
         questionStartedAt,
       }
     : {
-      id: `run-${Date.now()}`,
-      mode: "friday",
+      id: `run-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      mode: normalizedMode,
       name,
       nameKey: normalizeName(name),
       cycleStart: state.activeCycleStart,
-      videoOrder: buildRunVideoOrder("friday"),
+      videoOrder: buildRunVideoOrder(normalizedMode),
       currentIndex: 0,
       phase: "question",
       answers: [],
@@ -2690,16 +2877,19 @@ function beginRun(rawName, mode = "friday") {
 }
 
 function handleChoice(choice) {
+  if (state.currentRun?.mode === "endless") { handleEndlessChoice(choice); return; }
   const run = state.currentRun;
 
   if (!run || run.mode === "quiz" || run.phase !== "question") {
     return;
   }
 
-  const section = getSectionForIndex(run.currentIndex);
+  const section = run.mode === "demo" ? DEMO_SECTION : getSectionForIndex(run.currentIndex);
   const video = getVideoForRunIndex(run, run.currentIndex);
+  if (!video || !["track", "cascade"].includes(choice)) return;
   const correct = isAnswerCorrect(video.id, choice);
-  const publicLines = section.publicLines ? getPublicLines(video.id, state.players) : null;
+  const publicLines = section.publicLines ? getPublicLines(video.id, getCrowdPlayers(run.mode)) : null;
+  const crowdBonus = getCrowdBonus(publicLines, choice, correct);
   const timing = getCurrentQuestionTiming(run.questionStartedAt);
   const doubleDown = section.coinMode ? isDoubleDownSelected() : false;
 
@@ -2726,12 +2916,16 @@ function handleChoice(choice) {
       coinsAfter = coinsBefore - (doubleDown ? 2 : 1);
     }
 
+    coinsAfter += crowdBonus;
     run.coins = coinsAfter;
   }
 
   run.answers.push({
     videoId: video.id,
     videoLabel: video.label,
+    videoSrc: video.src,
+    expectedChoice: getExpectedChoice(video.id),
+
     questionNumber: run.currentIndex + 1,
     sectionId: section.id,
     sectionLabel: `${section.label}: ${section.title}`,
@@ -2745,6 +2939,8 @@ function handleChoice(choice) {
     streakAfter,
     streakBonusApplied,
     publicLines,
+    crowdBonus,
+    sourceGroup: video.sourceGroup,
     questionStartedAt: timing.questionStartedAt,
     answeredAt: timing.answeredAt,
     responseSeconds: timing.responseSeconds,
@@ -2756,8 +2952,9 @@ function handleChoice(choice) {
     videoProgress: timing.videoProgress,
   });
 
-  trackEvent("friday_answer_locked", {
-    mode: "friday",
+  trackEvent(run.mode === "demo" ? "demo_answer_locked" : "friday_answer_locked", {
+    mode: run.mode,
+    crowdBonus,
     runId: run.id,
     nameKey: run.nameKey,
     videoId: video.id,
@@ -2769,6 +2966,7 @@ function handleChoice(choice) {
     questionNumber: run.currentIndex + 1,
   });
 
+  evaluateAchievements(run);
   run.phase = "feedback";
   saveStorage(STORAGE_KEYS.currentRun, run);
   render();
@@ -2826,16 +3024,19 @@ function answerQuizQuestion(choice) {
   const streakBefore = getCoinCorrectStreak(run.answers);
   const streakBonusApplied = correct && streakBefore >= 2;
   const streakAfter = correct ? streakBefore + 1 : 0;
-  const coinsAfter = correct
+  let coinsAfter = correct
     ? coinsBefore + (doubleDown ? (streakBonusApplied ? 3 : 2) : (streakBonusApplied ? 2 : 1))
     : coinsBefore - (doubleDown ? 2 : 1);
   const publicLines = getPublicLines(video.id, state.quickQuizPlayers);
+  const crowdBonus = getCrowdBonus(publicLines, choice, correct);
+  coinsAfter += crowdBonus;
 
   run.coins = coinsAfter;
   const answer = {
     videoId: video.id,
     videoLabel: video.label,
     videoSrc: video.src,
+
     sourceGroup: video.sourceGroup,
     questionNumber: run.currentIndex + 1,
     sectionId: expectedChoice,
@@ -2854,6 +3055,7 @@ function answerQuizQuestion(choice) {
     streakAfter,
     streakBonusApplied,
     publicLines,
+    crowdBonus,
     ...timing,
   };
 
@@ -2870,12 +3072,14 @@ function answerQuizQuestion(choice) {
     responseSeconds: timing.responseSeconds,
   });
 
+  evaluateAchievements(run);
   run.phase = "quick-feedback";
   saveStorage(STORAGE_KEYS.currentRun, run);
   render();
 }
 
 async function advanceRun() {
+  if (state.currentRun?.mode === "endless") { advanceEndlessRun(); return; }
   const run = state.currentRun;
 
   if (!run) {
@@ -2915,6 +3119,7 @@ async function advanceRun() {
 }
 
 async function finalizeRun() {
+  if (state.currentRun?.mode === "endless") { finishEndlessRun(); return; }
   const run = state.currentRun;
 
   if (!run) {
@@ -2928,6 +3133,21 @@ async function finalizeRun() {
 
   if (run.mode === "quick") {
     await finalizeQuickQuizRun(run);
+    return;
+  }
+
+  if (run.mode === "demo") {
+    evaluateAchievements(run, true);
+    const stats = calculateRunStats(run.answers);
+    const record = { ...run, completedAt: new Date().toISOString(), finalCoins: run.coins ?? 10, totalCorrect: stats.totalCorrect, totalQuestions: stats.totalQuestions, totalAccuracy: stats.totalAccuracy, sectionStats: stats.sectionStats };
+    if (run.answers.length !== DEMO_VIDEO_COUNT) return;
+    state.pendingCollaboratorRuns = [...state.pendingCollaboratorRuns.filter(item => item.id !== record.id), record];
+    saveStorage(STORAGE_KEYS.pendingCollaboratorRuns, state.pendingCollaboratorRuns);
+    state.lastCompletedRun = record;
+    state.currentRun = null;
+    localStorage.removeItem(STORAGE_KEYS.currentRun);
+    render();
+    void syncCollaboratorPlayersFromServer();
     return;
   }
 
@@ -2962,6 +3182,8 @@ async function finalizeRun() {
       totalAccuracy: stats.totalAccuracy,
       finalCoins: playerRecord.finalCoins,
     });
+    evaluateAchievements(run, true);
+    playerRecord.unlockedAchievementIds = run.unlockedAchievementIds || [];
     state.lastCompletedRun = playerRecord;
     state.currentRun = null;
     localStorage.removeItem(STORAGE_KEYS.currentRun);
@@ -3012,6 +3234,7 @@ async function finalizeQuizRun(run) {
       sectionLabel: titleCase(expectedChoice),
       sectionQuestionNumber: index + 1,
       choice,
+
       expectedChoice,
       correct: choice === expectedChoice,
       publicLines: null,
@@ -3049,6 +3272,8 @@ async function finalizeQuizRun(run) {
       totalQuestions: stats.totalQuestions,
       totalAccuracy: stats.totalAccuracy,
     });
+    evaluateAchievements(run, true);
+    playerRecord.unlockedAchievementIds = run.unlockedAchievementIds || [];
     state.lastCompletedRun = playerRecord;
     state.currentRun = null;
     localStorage.removeItem(STORAGE_KEYS.currentRun);
@@ -3103,6 +3328,8 @@ async function finalizeQuickQuizRun(run) {
       totalAccuracy: stats.totalAccuracy,
       finalCoins: playerRecord.finalCoins,
     });
+    evaluateAchievements(run, true);
+    playerRecord.unlockedAchievementIds = run.unlockedAchievementIds || [];
     state.lastCompletedRun = playerRecord;
     state.currentRun = null;
     localStorage.removeItem(STORAGE_KEYS.currentRun);
@@ -3161,6 +3388,7 @@ function getQuickQuizGroupStats(answers) {
 }
 
 function buildLeaderboard(players, mode = "friday") {
+  if (mode === "endless") return [...players].sort(compareEndlessRuns);
   return [...players].sort((left, right) => {
     if (mode === "quiz") {
       if (right.totalCorrect !== left.totalCorrect) {
@@ -3437,9 +3665,11 @@ function getPublicLines(videoId, players) {
   const summary = getCombinedVideoLineStats(videoId, players);
 
   return {
-    trackPercentage: summary.trackPercentage,
-    cascadePercentage: summary.cascadePercentage,
+    trackPercentage: summary.totalResponses ? summary.trackCount / summary.totalResponses : summary.trackPercentage,
+    cascadePercentage: summary.totalResponses ? summary.cascadeCount / summary.totalResponses : summary.cascadePercentage,
     totalResponses: summary.totalResponses,
+    trackCount: summary.trackCount,
+    cascadeCount: summary.cascadeCount,
   };
 }
 
@@ -3488,7 +3718,7 @@ function ensureCurrentRunVideoOrder() {
 
 function getVideoForRunIndex(run, index) {
   const videoId = Array.isArray(run?.videoOrder) ? run.videoOrder[index] : null;
-  if (["quiz", "quick"].includes(run?.mode)) {
+  if (["demo", "quiz", "quick", "endless"].includes(run?.mode)) {
     return ALL_VIDEOS_BY_ID[videoId] || ALL_VIDEOS[index];
   }
 
@@ -3496,7 +3726,9 @@ function getVideoForRunIndex(run, index) {
 }
 
 function getRunVideoCount(run = state.currentRun) {
-  const configuredCount = run?.mode === "quiz"
+  if (run?.mode === "endless") return run.totalQuestions;
+  if (run?.mode === "demo" && run.completedAt && run.answers?.length) return run.answers.length;
+  const configuredCount = run?.mode === "demo" ? Math.min(DEMO_VIDEO_COUNT, getCollaboratorVideos().length) : run?.mode === "quiz"
     ? QUIZ_VIDEO_COUNT
     : run?.mode === "quick"
       ? getQuickQuizVideoCount()
@@ -3513,7 +3745,24 @@ function getConfiguredRunVideoCount() {
   return Math.min(RUN_VIDEO_COUNT, VIDEOS.length);
 }
 
+function getCollaboratorVideos() {
+  return ALL_VIDEOS.filter(video => video.sectionId === "market");
+}
+
 function buildRunVideoOrder(mode = "friday") {
+  if (mode === "demo") {
+    // Round-robin random samples guarantee representation from every set.
+    const videos = getCollaboratorVideos();
+    const groups = [...new Set(videos.map(video => video.sourceGroup))];
+    const pools = shuffleList(groups).map(group => shuffleList(videos.filter(video => video.sourceGroup === group)));
+    const selected = [];
+    while (selected.length < Math.min(DEMO_VIDEO_COUNT, videos.length)) {
+      for (const pool of pools) {
+        if (pool.length && selected.length < DEMO_VIDEO_COUNT) selected.push(pool.pop().id);
+      }
+    }
+    return shuffleList(selected);
+  }
   if (mode === "quiz") {
     return buildQuizRunVideoOrder();
   }
@@ -3528,6 +3777,12 @@ function buildRunVideoOrder(mode = "friday") {
 function isCurrentRunCompatible(run) {
   if (!run) {
     return false;
+  }
+
+  if (run.mode === "endless") return isValidEndlessRun(run);
+
+  if (run.mode === "demo") {
+    return Array.isArray(run.videoOrder) && run.videoOrder.length === Math.min(DEMO_VIDEO_COUNT, getCollaboratorVideos().length) && new Set(run.videoOrder).size === run.videoOrder.length && run.videoOrder.every(id => ALL_VIDEOS_BY_ID[id]?.sectionId === "market");
   }
 
   if (run.mode === "quiz") {
@@ -3804,7 +4059,8 @@ function buildQuizStatus(run) {
 }
 
 function getPlayersForMode(mode) {
-  return mode === "quiz"
+  if (mode === "endless") return state.endlessPlayers;
+  return mode === "demo" ? state.demoPlayers : mode === "quiz"
     ? state.quizPlayers
     : mode === "quick"
       ? state.quickQuizPlayers
@@ -3824,7 +4080,7 @@ function getActiveMode() {
     return state.lastCompletedRun.mode;
   }
 
-  return ["quiz", "quick"].includes(state.selectedMode) ? state.selectedMode : "friday";
+  return ["demo", "quiz", "quick", "friday", "endless"].includes(state.selectedMode) ? state.selectedMode : "demo";
 }
 
 function selectMode(mode) {
@@ -3833,11 +4089,13 @@ function selectMode(mode) {
   }
 
   state.selectedMode = mode;
+  state.lastCompletedRun = null;
   saveStorage(STORAGE_KEYS.selectedMode, mode);
   const url = new URL(window.location.href);
   url.searchParams.set("mode", mode);
   window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   render();
+  void syncAllDataFromServer({force: true});
 }
 
 function updateQuizSelectionUi(run, videoId) {
@@ -3965,6 +4223,8 @@ function trackEvent(type, details = {}) {
   };
 
   analyticsQueue.push(eventRecord);
+  // Telemetry is bounded during outages; completed scores use their durable queue.
+  if (analyticsQueue.length > 500) analyticsQueue.splice(0, analyticsQueue.length - 500);
   scheduleAnalyticsFlush();
 }
 
@@ -3980,47 +4240,33 @@ function scheduleAnalyticsFlush() {
 }
 
 async function flushAnalyticsEvents({ useBeacon = false } = {}) {
-  if (!analyticsQueue.length) {
-    return;
+  if (!analyticsQueue.length || analyticsFlushing) return;
+  const events = analyticsQueue.splice(0, 100);
+  let payload = JSON.stringify({events});
+  // Browsers share a 64 KiB allowance for beacon and keepalive requests.
+  while (events.length > 1 && new Blob([payload]).size > 60000) {
+    analyticsQueue.unshift(events.pop());
+    payload = JSON.stringify({events});
   }
-
-  const events = analyticsQueue.splice(0, analyticsQueue.length);
-  const payload = JSON.stringify({ events });
-
   if (useBeacon && navigator.sendBeacon) {
-    const sent = navigator.sendBeacon(
-      API_ANALYTICS_EVENTS_URL,
-      new Blob([payload], { type: "application/json" }),
-    );
-
-    if (!sent) {
-      analyticsQueue.unshift(...events);
-    }
-
+    if (!navigator.sendBeacon(API_ANALYTICS_EVENTS_URL, new Blob([payload], {type: "application/json"}))) analyticsQueue.unshift(...events);
     return;
   }
-
+  analyticsFlushing = true;
   try {
     const response = await fetch(API_ANALYTICS_EVENTS_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: payload,
-      keepalive: true,
+      method: "POST", headers: {"Content-Type": "application/json"}, body: payload, keepalive: true,
     });
-
-    if (!response.ok) {
-      throw new Error(`Failed to persist analytics events: ${response.status}`);
-    }
-
-    const analyticsPayload = await response.json();
-    applyAnalyticsPayload(analyticsPayload);
-    state.analyticsLoaded = true;
+    if (!response.ok) throw new Error(`Failed to persist analytics events: ${response.status}`);
+    const result = await response.json();
+    if (result.summary) applyAnalyticsPayload(result);
     state.analyticsError = null;
   } catch (error) {
-    console.error(error);
     analyticsQueue.unshift(...events);
+    if (analyticsQueue.length > 500) analyticsQueue.splice(0, analyticsQueue.length - 500);
+  } finally {
+    analyticsFlushing = false;
+    if (analyticsQueue.length) scheduleAnalyticsFlush();
   }
 }
 
@@ -4029,12 +4275,13 @@ function getCombinedVideoLineStats(videoId, players) {
   const answers = players.flatMap((player) =>
     player.answers.filter((answer) => answer.videoId === videoId),
   );
-  const liveTrackCount = answers.filter((answer) => answer.choice === "track").length;
-  const liveCascadeCount = answers.filter((answer) => answer.choice === "cascade").length;
+  const counts = players.crowdStats ? (players.crowdStats[videoId] || {trackCount: 0, cascadeCount: 0, correctCount: 0}) : null;
+  const liveTrackCount = counts ? counts.trackCount : answers.filter((answer) => answer.choice === "track").length;
+  const liveCascadeCount = counts ? counts.cascadeCount : answers.filter((answer) => answer.choice === "cascade").length;
   const trackCount = seededCounts.trackCount + liveTrackCount;
   const cascadeCount = seededCounts.cascadeCount + liveCascadeCount;
   const totalResponses = trackCount + cascadeCount;
-  const liveCorrectCount = answers.filter((answer) => answer.correct).length;
+  const liveCorrectCount = counts ? counts.correctCount : answers.filter((answer) => answer.correct).length;
   const seededCorrectCount = getSeededCorrectCount(videoId, seededCounts);
   const feedVote = totalResponses < 3 ? getQuickQuizFeedVoteAverage(videoId) : null;
   const weightedTrackCount = trackCount + (feedVote?.track ?? 0);
@@ -4109,6 +4356,7 @@ function updateAnalysisButton() {
 
   const playerCount = getPlayersForMode(getActiveMode()).length;
   button.disabled = false;
+  if (getActiveMode() === "endless") { button.textContent = "Endless leaderboard"; return; }
   button.textContent = playerCount
     ? `Analysis & Export (${playerCount})`
     : "Analysis & Export";
@@ -4517,7 +4765,7 @@ function normalizeStoredRun(run) {
 
   return {
     ...run,
-    mode: ["quiz", "quick"].includes(run.mode) ? run.mode : "friday",
+    mode: ["demo", "quiz", "quick", "endless"].includes(run.mode) ? run.mode : "friday",
   };
 }
 
@@ -4541,6 +4789,7 @@ function loadStorage(key, fallbackValue) {
 
 function saveStorage(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
+  if (typeof queueAccountSave === "function" && Object.values(STORAGE_KEYS).includes(key)) queueAccountSave();
 }
 
 function getFiniteNumber(value) {
@@ -4593,3 +4842,269 @@ function calculateAfterHalfRate(answers) {
 
   return afterHalfCount / comparableAnswers.length;
 }
+
+
+function getCrowdPlayers(mode) {
+  if (mode !== "demo") return getPlayersForMode(mode);
+  const records = [...state.playerHistory, ...state.players, ...state.quizHistory, ...state.quizPlayers, ...state.quickQuizHistory, ...state.quickQuizPlayers, ...state.demoHistory, ...state.demoPlayers];
+  const players = [...new Map(records.filter(player => !player.isSeedData).map(player => [player.id, player])).values()];
+  if (state.demoPlayers.crowdStats) players.crowdStats = state.demoPlayers.crowdStats;
+  return players;
+}
+
+function getCurrentChoiceLines() {
+  const run = state.currentRun;
+  const video = run && getVideoForRunIndex(run, run.currentIndex);
+  return video ? getPublicLines(video.id, getCrowdPlayers(run.mode)) : null;
+}
+
+function getCrowdBonus(lines, choice, correct) {
+  if (!correct || !lines || !["track", "cascade"].includes(choice) || lines.totalResponses <= 0) return 0;
+  const count = choice === "track" ? lines.trackCount : lines.cascadeCount;
+  return Number.isFinite(count) && count / lines.totalResponses < 0.25 ? CROWD_BONUS_COINS : 0;
+}
+
+function renderCrowdBonusFeedback(answer) {
+  return answer.correct && answer.crowdBonus ? `<div class="crowd-bonus-celebration" role="status"><span aria-hidden="true">✦</span><div><strong>Against the crowd! +${answer.crowdBonus} bonus coins</strong><p>Under 25% of recorded votes chose ${titleCase(answer.choice)} before your pick. Your correct, independent call earns a bonus on top of your correct-answer reward.</p></div></div>` : "";
+}
+
+function renderGameMechanics() {
+  return `<div class="demo-mechanics">
+    <article><span class="mechanic-number">01</span><strong>Make the call</strong><p>Start with 10 coins. Correct: +1. Incorrect: −1. Watch, replay, then choose.</p></article>
+    <article><span class="mechanic-number">02</span><strong>Build a hot hand</strong><p>After two correct calls in a row, each next correct call earns +2 until you miss.</p></article>
+    <article><span class="mechanic-number">03</span><strong>Raise the stakes</strong><p>Double or Nothing: +2 on a hit, −2 on a miss. A hot-hand hit earns +3.</p></article>
+    ${getActiveMode() === "endless" ? `<article><span class="mechanic-number">04</span><strong>Save your place</strong><p>Pause and resume the same run. Guest progress stays on this device; an account lets you continue across devices.</p></article>` : `<article><span class="mechanic-number">04</span><strong>Go against the crowd</strong><p>Choose an answer with under 25% of recorded votes for +2 extra coins when your answer is correct. No votes means no bonus.</p></article>`}
+  </div>`;
+}
+
+function renderDemoLandingContent() {
+  return {
+    hero: `<p class="eyebrow">Collaborator Game · 5-question run</p><h2 class="hero-title">Can you spot a neutrino’s signature?</h2><p class="hero-copy">Read the light. Call the shape. See how your eye compares with the crowd.</p><div class="demo-facts"><span>5 questions per run</span><span>100 clips · 4 video sets</span><span>A fresh mix every time</span></div>${renderStartForm({buttonLabel: MODE_CONFIGS.demo.startButtonLabel, helperCopy: "Five random clips from the new 100-video catalog, covering all four sets. Completed runs join the global collaborator leaderboard, shared across devices and separate from the research leaderboards."})}`,
+    aside: `<div class="demo-aside-heading"><p class="eyebrow">How the game works</p><h3 class="card-title">Every call counts.</h3></div>${renderGameMechanics()}`,
+  };
+}
+
+function renderIntro() {
+  const root = document.querySelector("#intro-modal-root");
+  if (!root) return;
+  document.querySelector(".page-shell").inert = state.showIntro;
+  document.body.classList.toggle("intro-open", state.showIntro);
+  if (!state.showIntro) { root.innerHTML = ""; return; }
+  if (root.childElementCount) return;
+  root.innerHTML = `<div class="intro-backdrop"><section class="intro-panel" role="dialog" aria-modal="true" aria-labelledby="intro-title" aria-describedby="intro-description" tabindex="-1">
+    <div class="intro-heading"><div><p class="eyebrow">IceCube science × human intuition</p><h2 id="intro-title">Game That<br><span>Neutrino</span></h2></div><div class="intro-heading-actions"><span class="intro-badge">${getActiveMode() === "endless" ? "Endless Mode" : "Collaborator Game"}</span><button type="button" class="ghost-button" data-action="close-intro" aria-label="Try Game That Neutrino">Try Game That Neutrino →</button></div></div>
+    <p class="intro-lead" id="intro-description">A particle from the universe leaves a pattern of light in Antarctic ice. Can you tell what happened?</p>
+    <div class="intro-science"><div><h3>The science behind the signal</h3><p>Neutrinos rarely interact with matter. When one interacts in or near IceCube, secondary charged particles can emit Cherenkov light. The detector’s sensors record that light; these event displays let you inspect its shape.</p><p>This game turns visual classification into a learning experience: compare your observation with the answer key and the crowd’s choices.</p><a href="https://icecube.wisc.edu/science/icecube/" target="_blank" rel="noopener noreferrer">Explore the IceCube science ↗</a></div><div class="intro-shapes"><article><div class="signature-track" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div><strong>Track</strong><p>An elongated trail, often made by a muon moving through the ice.</p></article><article><div class="signature-cascade" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div><strong>Cascade</strong><p>A compact shower of particles, lighting up around an interaction.</p></article></div></div>
+    <div class="intro-game-heading"><p class="eyebrow">Your mission</p><h3>Watch. Classify. Collect coins.</h3><p>${getActiveMode() === "endless" ? "Keep classifying for as long as you like. Pause and save your run whenever you need a break." : "Play 5 random clips drawn from every set. Track or Cascade? Make your call and get instant feedback."}</p></div>
+    ${renderGameMechanics()}
+    <p class="subtle-copy">Earn gold trophies and compare achievement totals across all modes.</p>
+    <div class="intro-bottom"><div class="intro-credits"><span>Created by <strong>Peter Tzimoulis</strong></span><span>Credits &amp; acknowledgments: <a href="https://www.zooniverse.org/projects/icecubeobservatory/name-that-neutrino" target="_blank" rel="noopener noreferrer"><strong>Name That Neutrino</strong> on Zooniverse ↗</a> · <span>Drexel University</span> · <strong>IceCube Collaboration</strong></span></div><button type="button" class="primary-button" data-action="close-intro">Start playing →</button></div>
+  </section></div>`;
+  requestAnimationFrame(() => root.querySelector(".intro-panel")?.focus());
+}
+
+function longestCorrectStreak(answers) {
+  let longest = 0, current = 0;
+  for (const answer of answers) { current = answer.correct ? current + 1 : 0; longest = Math.max(longest, current); }
+  return longest;
+}
+
+function achievementConditions(run, completed = false) {
+  const answers = run.answers || [];
+  const correct = answers.filter(answer => answer.correct);
+  const classes = new Set(correct.map(answer => answer.expectedChoice || getExpectedChoice(answer.videoId)));
+  return {
+    "first-call": run.mode === "endless" ? run.totalCorrect > 0 : correct.length > 0,
+    "hot-hand": run.mode === "endless" ? run.bestStreak >= 3 : longestCorrectStreak(answers) >= 3,
+    "independent": correct.some(answer => answer.crowdBonus > 0),
+    "keen-eye": run.mode === "endless" ? run.trackCorrect > 0 && run.cascadeCorrect > 0 : classes.has("track") && classes.has("cascade"),
+    "demo-complete": completed && run.mode === "demo" && answers.length === DEMO_VIDEO_COUNT,
+    "perfect-demo": completed && run.mode === "demo" && answers.length === DEMO_VIDEO_COUNT && correct.length === DEMO_VIDEO_COUNT,
+    "finisher": completed && (run.mode === "endless" ? run.totalQuestions > 0 : answers.length === getRunVideoCount(run)),
+    "explorer": completed && run.mode === "demo" && [...new Set(getCollaboratorVideos().map(video => video.sourceGroup))].every(group => answers.some(answer => answer.sourceGroup === group)),
+    "endless-10": run.mode === "endless" && run.totalQuestions >= 10,
+    "endless-50": run.mode === "endless" && run.totalQuestions >= 50,
+    "endless-100": run.mode === "endless" && run.totalQuestions >= 100,
+    "endless-250": run.mode === "endless" && run.totalQuestions >= 250,
+    "endless-streak-10": run.mode === "endless" && run.bestStreak >= 10,
+    "endless-correct-100": run.mode === "endless" && run.totalCorrect >= 100,
+  };
+}
+
+function evaluateAchievements(run, completed = false) {
+  const key = normalizeName(run.name);
+  const profile = state.localTrophies[key] || {name: run.name, nameKey: key, unlocked: [], synced: true};
+  const conditions = achievementConditions(run, completed);
+  const earned = ACHIEVEMENTS.filter(item => conditions[item.id] && !profile.unlocked.includes(item.id));
+  if (!earned.length) return;
+  profile.unlocked.push(...earned.map(item => item.id));
+  profile.synced = false;
+  state.localTrophies[key] = profile;
+  run.unlockedAchievementIds = [...new Set([...(run.unlockedAchievementIds || []), ...earned.map(item => item.id)])];
+  state.trophyNotice = [...new Set([...state.trophyNotice, ...earned.map(item => item.id)])];
+  saveStorage(STORAGE_KEYS.trophies, state.localTrophies);
+  void syncAchievements();
+}
+
+async function syncAchievements() {
+  if (state.syncingAchievements) return;
+  state.syncingAchievements = true;
+  const owner = progressStorageOwner;
+  try {
+    let payload = state.showAchievements ? await fetchSharedJson("/api/achievements") : {profiles: [], partial: true};
+    if (owner !== progressStorageOwner) return;
+    const mergeProfiles = (profiles, partial = false) => {
+      state.trophyProfiles = partial
+        ? [...new Map([...state.trophyProfiles, ...(profiles || [])].map(profile => [profile.nameKey, profile])).values()]
+        : (Array.isArray(profiles) ? profiles : []);
+      for (const remote of state.trophyProfiles) {
+        const key = normalizeName(remote.name);
+        const local = state.localTrophies[key];
+        if (local) {
+          local.unlocked = [...new Set([...local.unlocked, ...remote.unlocked])];
+          local.synced = local.unlocked.every(id => remote.unlocked.includes(id));
+        } else state.localTrophies[key] = {...remote, synced: true};
+      }
+    };
+    mergeProfiles(payload.profiles, payload.partial);
+    for (const profile of Object.values(state.localTrophies).filter(item => !item.synced)) {
+      const submitted = [...profile.unlocked];
+      const posted = await fetch("/api/achievements", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({name: profile.name, unlocked: submitted})});
+      if (!posted.ok) throw new Error("Could not sync trophies");
+      payload = await posted.json();
+      if (owner !== progressStorageOwner) return;
+      mergeProfiles(payload.profiles, payload.partial);
+    }
+    state.trophiesLoaded = true;
+    state.trophiesError = false;
+  } catch (error) {
+    state.trophiesError = true;
+  } finally {
+    state.syncingAchievements = false;
+    if (owner === progressStorageOwner) saveStorage(STORAGE_KEYS.trophies, state.localTrophies);
+    renderAchievementOverlays();
+  }
+}
+
+function closeAchievements() {
+  state.showAchievements = false;
+  renderAchievementOverlays();
+  (state.achievementReturnFocus?.isConnected ? state.achievementReturnFocus : document.querySelector(".trophy-nav"))?.focus();
+}
+
+function renderAchievementOverlays() {
+  const root = document.querySelector("#achievement-modal-root");
+  const toastRoot = document.querySelector("#achievement-toast-root");
+  if (!root || !toastRoot) return;
+  const page = document.querySelector(".page-shell");
+  if (page) page.inert = state.showIntro || state.showAchievements || (typeof accountState !== "undefined" && accountState.show);
+  document.body.classList.toggle("achievements-open", state.showAchievements);
+  if (state.showAchievements) {
+    const restoreDialogFocus = root.contains(document.activeElement);
+    const name = state.currentRun?.name || state.lastCompletedRun?.name || state.lastName;
+    const profile = name ? state.localTrophies[normalizeName(name)] : null;
+    const unlocked = getActiveAchievementIds(profile);
+    const board = state.trophyProfiles.map(entry => ({...entry, unlocked: getActiveAchievementIds(entry)})).filter(entry => entry.unlocked.length).sort((a, b) => b.unlocked.length - a.unlocked.length || a.name.localeCompare(b.name));
+    root.innerHTML = `<div class="modal-backdrop is-open trophy-backdrop"><section class="achievement-dialog" id="achievement-dialog" role="dialog" aria-modal="true" aria-labelledby="achievement-title" tabindex="-1"><div class="table-caption"><div><p class="eyebrow">The trophy cabinet</p><h2 class="card-title" id="achievement-title">🏆 Achievements</h2></div><button type="button" class="ghost-button" data-action="close-achievements" aria-label="Close achievements">Close ×</button></div><p class="subtle-copy">${name ? `${escapeHtml(name)} · ${unlocked.length} of ${ACHIEVEMENTS.length} unlocked` : "Enter a player name and start a run to collect trophies."} · All game modes count. Use the same name to continue your collection.</p><div class="achievement-grid">${ACHIEVEMENTS.map(item => `<article class="achievement-card ${unlocked.includes(item.id) ? "is-unlocked" : "is-locked"}"><span class="trophy-icon" aria-hidden="true">🏆</span><div><strong>${item.title}</strong><p>${item.description}</p><span>${unlocked.includes(item.id) ? "Unlocked" : "Locked"}</span></div></article>`).join("")}</div><h3 class="card-title trophy-board-title">Most achievements · shared leaderboard</h3><p class="subtle-copy">${state.trophiesError ? "Shared board is temporarily unavailable. New trophies are saved on this device and will retry syncing." : state.syncingAchievements ? "Syncing trophies…" : "One entry per player name. Ranked by total unique trophies; ties share a rank."}</p>${board.length ? `<div class="leaderboard-scroll"><table class="leaderboard-table"><thead><tr><th>Rank</th><th>Player</th><th>Trophies</th></tr></thead><tbody>${board.map(entry => `<tr ${entry.nameKey === normalizeName(name || "") ? 'class="is-current-player"' : ""}><td>${board.findIndex(other => other.unlocked.length === entry.unlocked.length) + 1}</td><td>${escapeHtml(entry.name)}</td><td>🏆 ${entry.unlocked.length} / ${ACHIEVEMENTS.length}</td></tr>`).join("")}</tbody></table></div>` : `<p class="empty-note">${state.trophiesLoaded ? "Be the first to earn a trophy." : "Loading shared standings…"}</p>`}</section></div>`;
+    if (restoreDialogFocus) root.querySelector("#achievement-dialog")?.focus();
+  } else root.innerHTML = "";
+  const earned = ACHIEVEMENTS.filter(item => state.trophyNotice.includes(item.id));
+  toastRoot.innerHTML = !state.showIntro && !state.showAchievements && earned.length ? `<aside class="achievement-toast" role="status" aria-live="polite"><span class="gold-trophy" aria-hidden="true">🏆</span><div><p class="eyebrow">${earned.length > 1 ? `${earned.length} achievements unlocked` : "Achievement unlocked"}</p><strong>${earned.map(item => item.title).join(" · ")}</strong><div class="trophy-toast-actions"><button type="button" data-action="open-achievements">View trophies</button><button type="button" data-action="dismiss-trophies" aria-label="Dismiss achievement notification">Dismiss ×</button></div></div></aside>` : "";
+}
+
+function renderRunInsights(run) {
+  const answers = run.answers || [];
+  const missed = answers.filter(answer => !answer.correct);
+  const countFor = kind => answers.filter(answer => (answer.expectedChoice || getExpectedChoice(answer.videoId)) === kind);
+  const classFeedback = ["track", "cascade"].map(kind => {
+    const items = countFor(kind);
+    return `<div><span>${titleCase(kind)} recognition</span><strong>${items.filter(answer => answer.correct).length} / ${items.length}</strong><p>${items.length ? `${formatPercent(items.filter(answer => answer.correct).length / items.length)} correct` : "No examples in this run"}</p></div>`;
+  }).join("");
+  const coins = answers.filter(answer => typeof answer.coinsAfter === "number");
+  const base = coins.reduce((sum, answer) => sum + (answer.correct ? 1 : -1), 0);
+  const hot = coins.filter(answer => answer.streakBonusApplied).length;
+  const wager = coins.reduce((sum, answer) => sum + (answer.doubleDown ? (answer.correct ? 1 : -1) : 0), 0);
+  const crowd = coins.reduce((sum, answer) => sum + (answer.crowdBonus || 0), 0);
+  const signed = value => `${value >= 0 ? "+" : ""}${value}`;
+  const earned = ACHIEVEMENTS.filter(item => run.unlockedAchievementIds?.includes(item.id));
+  return `<section class="run-insights"><p class="eyebrow">Your run, explained</p><h3 class="card-title">${missed.length ? "A few patterns to revisit" : "Every call matched the answer key"}</h3><p class="subtle-copy">${missed.length ? "Replay the missed clips below. Look for an extended trail in Track events and a compact light shower in Cascades." : "Try a fresh mix to see whether you can keep that accuracy."} Your longest streak was ${longestCorrectStreak(answers)} correct call${longestCorrectStreak(answers) === 1 ? "" : "s"}.</p><div class="insight-grid">${classFeedback}</div>${coins.length ? `<div class="coin-breakdown"><strong>Coin breakdown</strong><span>Answers ${signed(base)}</span><span>Hot hand +${hot}</span><span>Wagers ${signed(wager)}</span><span>Crowd +${crowd}</span><b>Net ${signed(base + hot + wager + crowd)}</b></div>` : ""}${earned.length ? `<p class="run-trophy-summary">🏆 New this run: ${earned.map(item => item.title).join(" · ")}</p>` : ""}<button type="button" class="secondary-button" data-action="open-achievements">🏆 View achievements &amp; standings</button>${!["quiz", "quick"].includes(run.mode) && missed.length ? `<details class="missed-review"><summary>Replay ${missed.length} missed clip${missed.length === 1 ? "" : "s"}</summary><div class="quiz-review-grid">${missed.map(answer => renderQuizReviewCard({...answer, expectedChoice: answer.expectedChoice || getExpectedChoice(answer.videoId)})).join("")}</div></details>` : ""}</section>`;
+}
+
+window.setInterval(() => {
+  if (document.visibilityState !== "hidden" && (state.showAchievements || Object.values(state.localTrophies).some(profile => !profile.synced))) void syncAchievements();
+}, PLAYER_SYNC_INTERVAL_MS);
+
+
+function renderMobileVoteContext(lines) {
+  return `<p class="mobile-vote-context">${lines?.totalResponses ? `Crowd: ${lines.totalResponses} recorded pick${lines.totalResponses === 1 ? "" : "s"}. Correct minority calls can earn +2.` : "Reference percentages · no recorded votes yet. Crowd bonus needs live votes."}</p>`;
+}
+
+
+function getActiveAchievementIds(profile) {
+  // Retain historical trophy data while counting only current game goals.
+  return ACHIEVEMENTS.filter(item => profile?.unlocked?.includes(item.id)).map(item => item.id);
+}
+
+
+function loadPendingCollaboratorRuns() {
+  const pending = loadStorage(STORAGE_KEYS.pendingCollaboratorRuns, []);
+  const runs = Array.isArray(pending) ? pending : [];
+  if (!loadStorage(STORAGE_KEYS.collaboratorMigration, false)) {
+    const legacy = loadStorage(STORAGE_KEYS.demoPlayers, []);
+    if (Array.isArray(legacy)) runs.push(...legacy.filter(run => run?.completedAt && run.answers?.length === DEMO_VIDEO_COUNT));
+    saveStorage(STORAGE_KEYS.pendingCollaboratorRuns, [...new Map(runs.map(run => [run.id, run])).values()]);
+    saveStorage(STORAGE_KEYS.collaboratorMigration, true);
+  }
+  return [...new Map(runs.map(run => [run.id, run])).values()];
+}
+
+function applyCollaboratorPayload(payload) {
+  applyBoardData(payload, "demoPlayers", "demoHistory");
+  state.collaboratorLeaderboardLoaded = true;
+  state.collaboratorLeaderboardError = null;
+  state.collaboratorDataVersion = payload.updatedAt || null;
+}
+
+async function syncCollaboratorPlayersFromServer() {
+  if (state.syncingCollaboratorPlayers) return;
+  state.syncingCollaboratorPlayers = true;
+  const previousVersion = state.collaboratorDataVersion;
+  const previouslyLoaded = state.collaboratorLeaderboardLoaded;
+  const hadError = Boolean(state.collaboratorLeaderboardError);
+  const owner = progressStorageOwner;
+  let uploaded = false;
+  try {
+    applyCollaboratorPayload(await fetchLeaderboardData(API_COLLABORATOR_PLAYERS_URL, "demo"));
+    if (owner !== progressStorageOwner) return;
+    // Remove a run only after the server confirms persistence. IDs make retries safe.
+    for (const record of [...state.pendingCollaboratorRuns]) {
+      const posted = await fetch(API_COLLABORATOR_PLAYERS_URL, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(record)});
+      if (!posted.ok) throw new Error("Could not upload a completed collaborator run. It is saved on this device and will retry.");
+      applyCollaboratorPayload(await posted.json());
+      if (owner !== progressStorageOwner) return;
+      state.pendingCollaboratorRuns = state.pendingCollaboratorRuns.filter(run => run.id !== record.id);
+      saveStorage(STORAGE_KEYS.pendingCollaboratorRuns, state.pendingCollaboratorRuns);
+      uploaded = true;
+    }
+  } catch (error) {
+    state.collaboratorLeaderboardError = error instanceof Error ? error.message : "Global collaborator standings are temporarily unavailable.";
+  } finally {
+    state.syncingCollaboratorPlayers = false;
+    if ((uploaded || state.showAnalysis || !previouslyLoaded || hadError || state.collaboratorLeaderboardError || previousVersion !== state.collaboratorDataVersion) && (!state.currentRun || state.showAnalysis || state.lastCompletedRun)) render();
+  }
+}
+
+function renderCollaboratorSyncStatus() {
+  if (state.collaboratorLeaderboardError) return `<p class="subtle-copy" role="status">${escapeHtml(state.collaboratorLeaderboardError)}${state.pendingCollaboratorRuns.length ? " Completed runs stay saved here until they sync." : " We will retry automatically."}</p>`;
+  if (state.pendingCollaboratorRuns.length) return `<p class="subtle-copy" role="status">Uploading ${state.pendingCollaboratorRuns.length} saved run${state.pendingCollaboratorRuns.length === 1 ? "" : "s"} to the global leaderboard…</p>`;
+  if (!state.collaboratorLeaderboardLoaded) return `<p class="subtle-copy" role="status">Loading global standings…</p>`;
+  return `<p class="subtle-copy">Shared across all devices · latest score per player name · refreshes automatically.</p>`;
+}
+
+function getCollaboratorRunStatus(run) {
+  return state.pendingCollaboratorRuns.some(record => record.id === run.id)
+    ? "Your run is saved on this device and is waiting to upload to the global collaborator leaderboard."
+    : "Your score is saved in the global collaborator leaderboard. Try another random mix or compare your calls with the crowd.";
+}
+
+window.addEventListener("online", () => { void syncCollaboratorPlayersFromServer(); });

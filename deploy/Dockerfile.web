@@ -1,0 +1,5 @@
+FROM nginx:1.28-alpine
+COPY deploy/nginx.conf /etc/nginx/nginx.conf
+COPY index.html about-me.html 4.0.html app.js accounts.js endless.js styles.css coin.png /srv/neutrino/
+COPY videos /srv/neutrino/videos
+RUN find /srv/neutrino -type f ! -name '*.html' ! -name '*.js' ! -name '*.css' ! -name '*.png' ! -name '*.mp4' ! -name '*.csv' -delete

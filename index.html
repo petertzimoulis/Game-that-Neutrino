@@ -3,8 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>4.0 — Quick Video Quiz</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <title>Game That Neutrino — Collaborator Game</title>
+    <meta name="description" content="Classify IceCube event displays, earn coins, and compare your intuition with the crowd. A neutrino classification game by Peter Tzimoulis." />
+    <link rel="stylesheet" href="./styles.css?v=endless-mode-20261015-7" />
   </head>
   <body>
     <div class="background-glow background-glow-left"></div>
@@ -15,10 +16,14 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">Particle Classification</p>
-          <h1 class="brand-title">4.0</h1>
+          <h1 class="brand-title">Game That Neutrino</h1>
         </div>
 
         <div class="topbar-actions">
+          <div id="account-controls"></div>
+          <button type="button" class="ghost-button trophy-nav" data-action="open-achievements">🏆 Achievements</button>
+          <button type="button" class="ghost-button" data-action="open-intro">About the game</button>
+          <a class="ghost-button button-link" href="./about-me.html">About Me</a>
           <button
             type="button"
             class="ghost-button"
@@ -47,17 +52,25 @@
       </header>
 
       <main id="app" class="app-root" aria-live="polite"></main>
+      <footer class="site-credits">Created by <a href="./about-me.html"><strong>Peter Tzimoulis</strong></a> · Credits &amp; acknowledgments: <strong>Name That Neutrino team at Drexel University</strong> · <a href="https://icecube.wisc.edu/" target="_blank" rel="noopener noreferrer">IceCube Collaboration</a></footer>
     </div>
 
+    <div id="achievement-modal-root"></div>
+    <div id="achievement-toast-root"></div>
+    <div id="intro-modal-root"></div>
     <div id="help-modal-root"></div>
     <div id="analysis-modal-root"></div>
+    <div id="account-modal-root"></div>
 
     <noscript>
       <div class="noscript-banner">
-        JavaScript is required to run the 4.0 quick video quiz.
+        JavaScript is required to run Game That Neutrino.
       </div>
     </noscript>
 
-    <script src="./app.js"></script>
+    <script src="./site-config.js"></script>
+    <script src="./endless.js?v=achievements-20261015-8"></script>
+    <script src="./app.js?v=achievements-20261015-9"></script>
+    <script src="./accounts.js?v=endless-mode-20261015-7"></script>
   </body>
 </html>

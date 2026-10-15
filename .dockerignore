@@ -1,0 +1,12 @@
+.git
+.venv
+.env
+__pycache__
+**/__pycache__
+*.pyc
+.openai
+.qodo
+dist
+worker
+backups
+load-results

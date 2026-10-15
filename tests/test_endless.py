@@ -1,0 +1,133 @@
+"""Endless checkpoint ownership, monotonic updates, best runs, and private long-run saves."""
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from urllib.parse import urlparse
+
+from accounts import AccountStore, validate_progress
+from endless import EndlessStore, EndlessError
+
+
+def checkpoint(run_id="run-a", name="Alice", total=10, correct=10, coins=28, finished=False, key="a" * 64):
+    return {"id": run_id, "mode": "endless", "name": name, "checkpointKey": key,
+            "startedAt": "2026-10-15T12:00:00Z", "totalQuestions": total,
+            "totalCorrect": correct, "finalCoins": coins, "bestStreak": min(correct, 10), "isCompleted": finished}
+
+
+class EndlessContract:
+    def test_checkpoint_persists_beyond_100_and_retries_are_idempotent(self):
+        record = checkpoint(total=150, correct=120, coins=190)
+        original = self.endless.save(record)
+        self.assertEqual(self.endless.save(record), original)
+        updated = self.endless.save({**record, "totalQuestions": 160, "totalCorrect": 125, "finalCoins": 195})
+        self.assertEqual(updated["totalQuestions"], 160)
+        self.assertEqual(self.endless.leaderboard()["players"][0], updated)
+        self.assertNotIn("checkpointKey", json.dumps(self.endless.leaderboard()))
+        self.assertNotIn("checkpoint_hash", json.dumps(self.endless.leaderboard()))
+
+    def test_another_player_cannot_overwrite_a_published_run_id(self):
+        saved = self.endless.save(checkpoint())
+        with self.assertRaises(EndlessError) as error:
+            self.endless.save(checkpoint(key="b" * 64))
+        self.assertEqual(error.exception.status, 403)
+        self.assertEqual(self.endless.leaderboard()["players"][0], saved)
+
+    def test_stale_checkpoint_does_not_roll_back_progress_or_finish_a_newer_run(self):
+        original = self.endless.save(checkpoint(total=100, correct=80, coins=100))
+        self.assertEqual(self.endless.save(checkpoint()), original)
+        with self.assertRaises(EndlessError) as error:
+            self.endless.save(checkpoint(finished=True))
+        self.assertEqual(error.exception.status, 409)
+        with self.assertRaises(EndlessError):
+            self.endless.save(checkpoint(total=100, correct=80, coins=101))
+        self.assertEqual(self.endless.leaderboard()["players"][0], original)
+
+    def test_finished_runs_are_final_but_a_finish_retry_is_safe(self):
+        self.endless.save(checkpoint())
+        finished = self.endless.save(checkpoint(finished=True))
+        self.assertTrue(finished["isCompleted"])
+        self.assertEqual(self.endless.save(checkpoint(finished=True)), finished)
+        with self.assertRaises(EndlessError):
+            self.endless.save(checkpoint(total=11, correct=11, coins=30))
+
+    def test_best_run_per_player_and_ranking_are_separate(self):
+        self.endless.save(checkpoint())
+        self.endless.save(checkpoint(run_id="alice-short", name=" alice ", total=3, correct=3, coins=14))
+        self.endless.save(checkpoint(run_id="bob", name="Bob", total=12, correct=11, coins=29))
+        self.endless.save(checkpoint(run_id="carol", name="Carol", total=11, correct=11, coins=30))
+        board = self.endless.leaderboard()["players"]
+        self.assertEqual([row["name"] for row in board], ["Carol", "Bob", "Alice"])
+        self.assertEqual(self.endless.best_for_player("alice")["id"], "run-a")
+        self.assertEqual(len(board), 3)
+
+    def test_negative_coins_are_valid_and_invalid_totals_are_rejected(self):
+        self.assertEqual(self.endless.save(checkpoint(total=20, correct=0, coins=-10))["finalCoins"], -10)
+        for changes in [{"totalCorrect": 21}, {"totalQuestions": True}, {"finalCoins": 10000}, {"bestStreak": -1}, {"checkpointKey": "public-id"}, {"isCompleted": "true"}]:
+            with self.assertRaises(EndlessError):
+                self.endless.save({**checkpoint(run_id="invalid", total=20, correct=0, coins=-10), **changes})
+
+    def test_compact_private_progress_has_no_lifetime_question_cap(self):
+        run = {"id": "million-questions", "name": "Alice", "mode": "endless", "phase": "question",
+               "checkpointKey": "a" * 64, "currentIndex": 99, "videoOrder": [f"catalog/{i}" for i in range(100)],
+               "answers": [{"correct": True} for _ in range(10)], "totalQuestions": 1_000_000,
+               "totalCorrect": 800_000, "coins": 500_000, "bestStreak": 100}
+        progress = {"currentRun": None, "endlessRun": run, "selectedMode": "endless", "pendingEndless": []}
+        self.assertEqual(validate_progress(progress), progress)
+        self.assertLess(len(json.dumps(progress)), 10000)
+
+
+class SQLiteEndless(EndlessContract, unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.endless = EndlessStore(AccountStore.sqlite(Path(self.folder.name) / "accounts.sqlite3"))
+
+    def tearDown(self):
+        self.folder.cleanup()
+
+
+@unittest.skipUnless(os.environ.get("TEST_DATABASE_URL"), "Set a disposable TEST_DATABASE_URL")
+class PostgresEndless(EndlessContract, unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from database import Store
+        from manage import migrate
+        url = os.environ["TEST_DATABASE_URL"]
+        if not urlparse(url).path.endswith(("_test", "_tests")):
+            raise RuntimeError("Use a disposable database")
+        migrate(url)
+        cls.store = Store(url)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.store.close()
+
+    def setUp(self):
+        with self.store.pool.connection() as conn:
+            conn.execute("TRUNCATE endless_runs")
+        self.endless = EndlessStore(AccountStore(self.store.pool.connection, postgres=True))
+
+    def test_public_mode_and_private_paused_run_restore(self):
+        from production import create_app
+        app = create_app(self.store)
+        with self.store.pool.connection() as conn:
+            conn.execute("TRUNCATE auth_accounts, auth_sessions, auth_limits CASCADE")
+        player, other = app.test_client(), app.test_client()
+        response = player.post("/api/endless-players", json=checkpoint(total=200, correct=150, coins=210))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["player"]["totalCorrect"], 150)
+        board = other.get("/api/endless-players")
+        self.assertEqual(board.status_code, 200)
+        self.assertEqual(board.json["players"][0]["mode"], "endless")
+        self.assertNotIn("checkpointKey", json.dumps(board.json))
+        self.assertEqual(other.get("/api/collaborator-players").status_code, 200)
+        headers = {"X-Neutrino-Request": "1"}
+        self.assertEqual(player.post("/api/auth/register", json={"username":"Alice","password":"Endless test only"}, headers=headers).status_code, 200)
+        progress = {"selectedMode":"endless","currentRun":None,"endlessRun":{
+            "id":"run-a","name":"Alice","mode":"endless","checkpointKey":"a"*64,
+            "answers":[],"videoOrder":["catalog/one"],"currentIndex":0,
+            "totalQuestions":200,"totalCorrect":150,"coins":210,"phase":"question"}}
+        self.assertEqual(player.post("/api/account/progress", json={"owner":"Alice","revision":0,"progress":progress}, headers=headers).status_code, 200)
+        self.assertEqual(other.post("/api/auth/login", json={"username":"Alice","password":"Endless test only"}, headers=headers).status_code, 200)
+        self.assertEqual(other.get("/api/account").json["progress"]["endlessRun"]["totalQuestions"], 200)

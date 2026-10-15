@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import os
 import random
 import sys
@@ -13,6 +14,8 @@ from pathlib import Path
 from threading import Lock
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
+from accounts import AccountStore, AccountError, ROUTES as ACCOUNT_ROUTES, MAX_BODY, session_cookie
+from endless import EndlessStore, EndlessError
 
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -21,6 +24,14 @@ FRIDAY_DB_PATH = DATA_DIR / "shared_leaderboard.json"
 QUIZ_DB_PATH = DATA_DIR / "quiz_leaderboard.json"
 QUICK_QUIZ_DB_PATH = DATA_DIR / "quick_quiz_40.json"
 ANALYTICS_DB_PATH = DATA_DIR / "analytics_events.json"
+ACHIEVEMENTS_DB_PATH = DATA_DIR / "achievements.json"
+COLLABORATOR_DB_PATH = DATA_DIR / "collaborator_leaderboard.json"
+ACHIEVEMENT_IDS = {
+    "first-call", "hot-hand", "independent", "keen-eye", "sure-shot",
+    "demo-complete", "perfect-demo", "finisher", "explorer",
+    "endless-10", "endless-50", "endless-100", "endless-250",
+    "endless-streak-10", "endless-correct-100",
+}
 DB_LOCK = Lock()
 RUN_VIDEO_COUNT = 15
 MAX_ANALYTICS_EVENTS = 5000
@@ -28,12 +39,18 @@ MAX_RECENT_ANALYTICS_EVENTS = 250
 ROTATION_TIMEZONE = ZoneInfo("America/New_York")
 FIRST_ROTATION_DATE = date(2026, 5, 1)
 MANIFEST_SOURCES = [
-    ("Group 1", "Group1Manifest.csv"),
-    ("Group 2", "Group2Manifest.csv"),
-    ("Group 3", "Group3Manifest.csv"),
-    ("Group 4", "Group4Manifest.csv"),
+    ("ntn_4.0_100_videos (1)", "manifest.csv"),
 ]
 CATALOG_VIDEO_IDS: list[str] | None = None
+ACCOUNT_STORES = {}
+
+
+def account_store():
+    path = Path(os.environ.get("ACCOUNT_DB_PATH", str(DATA_DIR / "accounts.sqlite3"))).resolve()
+    with DB_LOCK:
+        if path not in ACCOUNT_STORES:
+            ACCOUNT_STORES[path] = AccountStore.sqlite(path)
+        return ACCOUNT_STORES[path]
 
 
 def now_iso() -> str:
@@ -286,6 +303,87 @@ def save_db(path: Path, db: dict) -> None:
     temp_path.replace(path)
 
 
+
+
+def validate_collaborator_record(payload: dict) -> dict:
+    name = payload.get("name")
+    record_id = payload.get("id")
+    answers = payload.get("answers")
+    if not isinstance(name, str) or not name.strip() or len(name.strip()) > 40:
+        raise ValueError("Enter a name of 1–40 characters")
+    if not isinstance(record_id, str) or not record_id or len(record_id) > 120:
+        raise ValueError("Missing run ID")
+    if not isinstance(answers, list) or len(answers) != 5:
+        raise ValueError("Only completed five-question collaborator runs can be submitted")
+    seen = set()
+    for answer in answers:
+        if not isinstance(answer, dict) or not isinstance(answer.get("videoId"), str):
+            raise ValueError("Invalid answer")
+        if answer["videoId"] in seen or not isinstance(answer.get("choice"), str) or answer.get("choice") not in {"track", "cascade"} or not isinstance(answer.get("correct"), bool):
+            raise ValueError("Each run needs five distinct answered clips")
+        seen.add(answer["videoId"])
+    coins = payload.get("finalCoins")
+    if isinstance(coins, bool) or not isinstance(coins, (int, float)) or not math.isfinite(coins):
+        raise ValueError("Invalid coin total")
+    try:
+        completed = datetime.fromisoformat(str(payload.get("completedAt", "")).replace("Z", "+00:00"))
+        if completed.utcoffset() is None:
+            raise ValueError("Completion time needs a timezone")
+    except ValueError as error:
+        raise ValueError("Invalid completion time") from error
+    correct = sum(answer["correct"] for answer in answers)
+    return {
+        **payload,
+        "mode": "demo",
+        "name": name.strip(),
+        "nameKey": " ".join(name.lower().split()),
+        "completedAt": completed.astimezone(timezone.utc).isoformat(),
+        "totalCorrect": correct,
+        "totalQuestions": len(answers),
+        "totalAccuracy": correct / len(answers),
+    }
+
+
+def merge_collaborator_record(db: dict, payload: dict) -> dict:
+    record = validate_collaborator_record(payload)
+    players = db.get("players", [])
+    existing = next((player for player in players if player.get("nameKey") == record["nameKey"]), None)
+    # Importing an old device score must not replace a newer shared result.
+    if existing is None or existing.get("completedAt", "") <= record["completedAt"]:
+        db["players"] = upsert_player(players, record, "demo")
+    db["history"] = upsert_history_record(db.get("history", []), record)
+    db["updatedAt"] = now_iso()
+    return db
+
+
+def serialize_collaborator_payload(db: dict) -> dict:
+    return {
+        "players": sort_players(db.get("players", []), "demo"),
+        "history": sort_history(db.get("history", [])),
+        "updatedAt": db.get("updatedAt"),
+    }
+
+
+def merge_achievement_profile(db: dict, payload: dict) -> dict:
+    name = payload.get("name")
+    unlocked = payload.get("unlocked")
+    if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80:
+        raise ValueError("A player name of 1–80 characters is required")
+    if not isinstance(unlocked, list) or not unlocked or len(unlocked) > len(ACHIEVEMENT_IDS):
+        raise ValueError(f"Supply 1–{len(ACHIEVEMENT_IDS)} achievement IDs")
+    if any(not isinstance(item, str) or item not in ACHIEVEMENT_IDS for item in unlocked):
+        raise ValueError("Unknown achievement")
+    key = " ".join(name.lower().split())
+    profiles = db.setdefault("profiles", [])
+    profile = next((item for item in profiles if item.get("nameKey") == key), None)
+    if profile is None:
+        profile = {"name": name.strip(), "nameKey": key, "unlocked": [], "firstEarnedAt": now_iso()}
+        profiles.append(profile)
+    profile["unlocked"] = sorted(set(profile["unlocked"]) | set(unlocked))
+    db["updatedAt"] = now_iso()
+    return db
+
+
 def sort_players(players: list[dict], mode: str) -> list[dict]:
     if mode == "quiz":
         return sorted(
@@ -465,10 +563,8 @@ def serialize_analytics_payload(db: dict) -> dict:
 
 class SharedLeaderboardHandler(SimpleHTTPRequestHandler):
     def end_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         super().end_headers()
 
     def do_OPTIONS(self) -> None:
@@ -477,6 +573,26 @@ class SharedLeaderboardHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed_path = urlparse(self.path)
+
+        if parsed_path.path == "/api/endless-players":
+            self.respond_json(HTTPStatus.OK, EndlessStore(account_store()).leaderboard())
+            return
+
+        if parsed_path.path in ACCOUNT_ROUTES:
+            self.handle_account_request()
+            return
+
+        if parsed_path.path == "/api/collaborator-players":
+            with DB_LOCK:
+                db = load_current_quiz_db(COLLABORATOR_DB_PATH)
+            self.respond_json(HTTPStatus.OK, serialize_collaborator_payload(db))
+            return
+
+        if parsed_path.path == "/api/achievements":
+            with DB_LOCK:
+                db = load_db(ACHIEVEMENTS_DB_PATH, lambda: {"profiles": []})
+            self.respond_json(HTTPStatus.OK, db)
+            return
 
         if parsed_path.path == "/api/health":
             self.respond_json(
@@ -521,6 +637,33 @@ class SharedLeaderboardHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed_path = urlparse(self.path)
+
+        if parsed_path.path == "/api/endless-players":
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 < size <= 4096:
+                    raise EndlessError(400, "Invalid checkpoint size.")
+                payload = json.loads(self.rfile.read(size).decode("utf-8"))
+                store = EndlessStore(account_store())
+                record = store.save(payload)
+                self.respond_json(HTTPStatus.OK, {"record": record, "player": store.best_for_player(record["nameKey"])})
+            except EndlessError as error:
+                self.respond_json(error.status, {"error": str(error)})
+            except (ValueError, UnicodeError):
+                self.respond_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid Endless Mode checkpoint."})
+            return
+
+        if parsed_path.path in ACCOUNT_ROUTES:
+            self.handle_account_request()
+            return
+
+        if parsed_path.path == "/api/collaborator-players":
+            self.handle_collaborator_post()
+            return
+
+        if parsed_path.path == "/api/achievements":
+            self.handle_achievement_post()
+            return
 
         if parsed_path.path == "/api/analytics-events":
             self.handle_analytics_event_post()
@@ -597,6 +740,47 @@ class SharedLeaderboardHandler(SimpleHTTPRequestHandler):
             ) if parsed_path.path in {"/api/quiz-players", "/api/quick-quiz-players"} else serialize_db_payload(db),
         )
 
+    def handle_collaborator_post(self) -> None:
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 < size <= 100000:
+                raise ValueError("Invalid request size")
+            payload = json.loads(self.rfile.read(size).decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("Expected an object")
+            with DB_LOCK:
+                db = load_current_quiz_db(COLLABORATOR_DB_PATH)
+                merge_collaborator_record(db, payload)
+                save_db(COLLABORATOR_DB_PATH, db)
+        except (ValueError, UnicodeDecodeError) as error:
+            self.respond_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+            return
+        except OSError:
+            self.respond_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Could not persist collaborator score"})
+            return
+        self.respond_json(HTTPStatus.OK, serialize_collaborator_payload(db))
+
+    def handle_achievement_post(self) -> None:
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 < size <= 4096:
+                self.respond_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid request size"})
+                return
+            payload = json.loads(self.rfile.read(size).decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("Expected an object")
+            with DB_LOCK:
+                db = load_db(ACHIEVEMENTS_DB_PATH, lambda: {"profiles": []})
+                merge_achievement_profile(db, payload)
+                save_db(ACHIEVEMENTS_DB_PATH, db)
+        except (ValueError, UnicodeDecodeError) as error:
+            self.respond_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+            return
+        except OSError:
+            self.respond_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Could not save trophies"})
+            return
+        self.respond_json(HTTPStatus.OK, db)
+
     def handle_analytics_event_post(self) -> None:
         content_length = int(self.headers.get("Content-Length", "0"))
         raw_body = self.rfile.read(content_length) if content_length else b""
@@ -635,11 +819,50 @@ class SharedLeaderboardHandler(SimpleHTTPRequestHandler):
             serialize_analytics_payload(db),
         )
 
-    def respond_json(self, status: HTTPStatus, payload: dict) -> None:
+    def send_head(self):
+        # Also covers HEAD, encoded paths, directory indexes and symlinks.
+        target = Path(self.translate_path(self.path)).resolve()
+        root = Path(self.directory).resolve()
+        account_path = Path(os.environ.get("ACCOUNT_DB_PATH", str(DATA_DIR / "accounts.sqlite3"))).resolve()
+        if (not target.is_relative_to(root) or target.is_relative_to(DATA_DIR.resolve()) or
+            str(target).startswith(str(account_path)) or
+            any(part.startswith(".") for part in target.relative_to(root).parts)):
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return None
+        return super().send_head()
+
+    def handle_account_request(self):
+        try:
+            payload = None
+            if self.command == "POST":
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 < size <= MAX_BODY:
+                    raise AccountError(413, "Account request is too large or empty.")
+                if self.headers.get_content_type() != "application/json":
+                    raise AccountError(415, "Send account requests as JSON.")
+                payload = json.loads(self.rfile.read(size).decode("utf-8"))
+            result, token = account_store().handle(self.command, urlparse(self.path).path, payload,
+                                                  self.headers, self.client_address[0])
+            headers = {"Cache-Control": "private, no-store"}
+            if token is not None:
+                hostname = urlparse("//" + self.headers.get("Host", "")).hostname
+                headers["Set-Cookie"] = session_cookie(token, secure=hostname not in {"localhost", "127.0.0.1", "::1"})
+            self.respond_json(HTTPStatus.OK, result, headers)
+        except AccountError as error:
+            headers = {"Cache-Control": "private, no-store"}
+            if error.status == 429:
+                headers["Retry-After"] = "900"
+            self.respond_json(error.status, error.payload, headers)
+        except (ValueError, UnicodeError):
+            self.respond_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid account request."})
+
+    def respond_json(self, status: HTTPStatus, payload: dict, headers=None) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
