@@ -1820,7 +1820,16 @@
       "timestamp": "2026-10-15T20:22:49.989Z",
       "mode": "demo",
       "nameKey": null
+    },
+    {
+      "id": "session-1792096447000-enevvy4l",
+      "sessionId": "session-1792096435945-i5dsz6oa",
+      "type": "visibility_changed",
+      "timestamp": "2026-10-15T20:34:07.000Z",
+      "mode": "demo",
+      "nameKey": null,
+      "visibilityState": "hidden"
     }
   ],
-  "updatedAt": "2026-10-15T20:23:20.277Z"
+  "updatedAt": "2026-10-15T20:34:07.438Z"
 }
