@@ -19,7 +19,9 @@ from endless import EndlessStore, EndlessError
 
 
 ROOT_DIR = Path(__file__).resolve().parent
-DATA_DIR = ROOT_DIR / "data"
+DATA_DIR = Path(os.environ.get("NEUTRINO_DATA_DIR", str(ROOT_DIR / "data")))
+GAME_STATE_EPOCH = os.environ.get("GAME_STATE_EPOCH", "")
+GAME_WRITE_PATHS = {"/api/players", "/api/collaborator-players", "/api/quiz-players", "/api/quick-quiz-players", "/api/achievements", "/api/endless-players"}
 FRIDAY_DB_PATH = DATA_DIR / "shared_leaderboard.json"
 QUIZ_DB_PATH = DATA_DIR / "quiz_leaderboard.json"
 QUICK_QUIZ_DB_PATH = DATA_DIR / "quick_quiz_40.json"
@@ -294,7 +296,7 @@ def load_current_analytics_db() -> dict:
 
 
 def save_db(path: Path, db: dict) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_suffix(".tmp")
 
     with temp_path.open("w", encoding="utf-8") as handle:
@@ -638,6 +640,11 @@ class SharedLeaderboardHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed_path = urlparse(self.path)
+
+        if (GAME_STATE_EPOCH and parsed_path.path in GAME_WRITE_PATHS and
+            self.headers.get("X-Neutrino-State-Epoch") != GAME_STATE_EPOCH):
+            self.respond_json(HTTPStatus.CONFLICT, {"error": "The game was reset. Reload the page to start a fresh run."})
+            return
 
         if parsed_path.path == "/api/endless-players":
             try:

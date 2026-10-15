@@ -1,0 +1,12 @@
+{
+  "url": "https://gamethatneutrino.com",
+  "alternate_host": "www.gamethatneutrino.com",
+  "ssh_host": "68.183.115.68",
+  "ssh_user": "root",
+  "app_path": "/opt/neutrino/app",
+  "releases_path": "/opt/neutrino/releases",
+  "data_path": "/opt/neutrino/data/reset-20261015-1",
+  "service": "neutrino.service",
+  "runtime": "python3 server.py",
+  "state_epoch": "reset-20261015-1"
+}

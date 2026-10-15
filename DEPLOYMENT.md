@@ -1,10 +1,18 @@
-# Independent hosting
+# Live website: gamethatneutrino.com
 
-The public Sites deployment was reset on October 15, 2026. Its active scores and trophies use `data/reset-20261015-1/` in GitHub; earlier files directly under `data/` are historical backups. Import the active directory when moving current scores to independent hosting. The reset also gives browser saves a fresh namespace and rejects score uploads from older open tabs. Analytics remain in their original location.
+**Canonical production URL: https://gamethatneutrino.com** (also `www.gamethatneutrino.com`). Publish to its existing DigitalOcean server, not ChatGPT Sites. `.openai/hosting.json` is legacy configuration and does not identify the production destination.
+
+The current server is `root@68.183.115.68`. nginx and Certbot provide HTTPS and proxy to `neutrino.service` on `127.0.0.1:8000`. The service runs `python3 server.py` from `/opt/neutrino/app`. Releases live in `/opt/neutrino/releases/`, with the active application linked at `/opt/neutrino/app`. Persistent JSON scores, analytics, and the private SQLite account/Endless database live at `/opt/neutrino/data/reset-20261015-1/`, selected by `NEUTRINO_DATA_DIR`. `GAME_STATE_EPOCH=reset-20261015-1` rejects pre-reset score uploads. Both login/account saves and the shared Endless leaderboard are supported on this server.
+
+Back up the current application and persistent data before deployment, upload a release without local data or private databases, and check it on a loopback staging port with separate temporary data. Switch the application link and restart `neutrino.service` only after checks pass. Verify the canonical HTTPS URL and its APIs. Keep the previous release for rollback. Preserve the existing nginx, DNS, and certificate configuration. `deploy/live.json` records these locations.
+
+The Docker/PostgreSQL deployment described below is an optional scaling setup; it is not the current server runtime.
+
+The requested October 15, 2026 leaderboard reset uses the `reset-20261015-1` state epoch. On the canonical server, current scores, trophies, analytics, and private account saves use the persistent data directory above; pre-reset data remain in the prior application backup. A separate legacy ChatGPT mirror has JSON files at `data/reset-20261015-1/` in GitHub. Those are not the authoritative production data. Future updates must preserve the canonical server's data directory rather than replace it with repository snapshots.
 
 **Analysis & Export** includes a mode selector, per-user performance and growth, per-video responses, all retained runs and answers, video-set breakdowns, and activity reports per user and video. Existing Friday and research exports remain available. Gameplay reports use the active score history; activity reports include the rolling 5,000-event window, including events from before the reset. `GET /api/analytics?view=full` returns that complete retained event window, while the ordinary endpoint keeps its compact recent-event preview. Tables preview 50 rows; detailed CSV exports include all available rows and preserve headers when empty. Endless totals use available leaderboard/device saves, while detailed answers are explicitly limited to the ten most recent picks retained per local run.
 
-The production path uses PostgreSQL, Gunicorn, nginx, and Caddy. It has no ChatGPT hosting, GitHub API, or other external application dependency at runtime. Videos are served by nginx and can optionally use your own media CDN. The older `server.py` entry point and `worker/` directory are legacy development/hosting paths; they are not launched by this setup.
+The optional scaling setup uses PostgreSQL, Gunicorn, nginx, and Caddy. It has no ChatGPT hosting, GitHub API, or other external application dependency at runtime. Videos are served by nginx and can optionally use your own media CDN. The `server.py` entry point and `worker/` directory are not launched by this Docker setup.
 
 ## Start on a server
 
