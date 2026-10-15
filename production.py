@@ -201,6 +201,8 @@ def create_app(store=None):
                 return jsonify(db.save_achievements(body()))
             return public_payload(resource, db.achievements)
         if resource == "analytics" and request.method == "GET":
+            if request.args.get("view") == "full":
+                return jsonify(db.analytics(full=True))
             return public_payload(resource, db.analytics)
         if resource == "analytics-events" and request.method == "POST":
             return jsonify(db.save_events(validate_events(body())))

@@ -368,7 +368,14 @@ document.addEventListener("click", (event) => {
         mode: getActiveMode(),
       });
       state.showHelp = false;
+      state.analysisMode = getActiveMode();
       state.showAnalysis = true;
+      render();
+      void syncAllDataFromServer({force: true});
+      break;
+    case "select-analysis-mode":
+      if (!["demo", "friday", "quiz", "quick", "endless"].includes(actionButton.dataset.mode)) break;
+      state.analysisMode = actionButton.dataset.mode;
       render();
       void syncAllDataFromServer({force: true});
       break;
@@ -1825,18 +1832,168 @@ function renderQuickQuizStatsOverview(players, history, nameKey = null) {
   `;
 }
 
+function getReportMode() {
+  return state.analysisMode || getActiveMode();
+}
+
+function getReportRecords(mode = getReportMode()) {
+  const sources = {
+    demo: [state.demoPlayers, state.demoHistory], friday: [state.players, state.playerHistory],
+    quiz: [state.quizPlayers, state.quizHistory], quick: [state.quickQuizPlayers, state.quickQuizHistory],
+    endless: [state.endlessPlayers, [state.currentRun, state.savedEndlessRun, state.lastCompletedRun,
+      ...loadStorage(STORAGE_KEYS.completedRuns, [])].filter(run => run?.mode === "endless")],
+  };
+  const records = new Map();
+  for (const record of (sources[mode] || []).flat()) {
+    if (!record?.id) continue;
+    const previous = records.get(record.id);
+    if (!previous || (record.totalQuestions || 0) > (previous.totalQuestions || 0) ||
+        ((record.totalQuestions || 0) === (previous.totalQuestions || 0) && (record.answers?.length || 0) >= (previous.answers?.length || 0))) records.set(record.id, record);
+  }
+  return [...records.values()].sort((a, b) => String(a.completedAt || a.updatedAt || a.startedAt).localeCompare(String(b.completedAt || b.updatedAt || b.startedAt)));
+}
+
+function getDetailedReportDefinitions(mode = getReportMode()) {
+  const records = getReportRecords(mode);
+  const answers = records.flatMap(run => (run.answers || []).map(answer => {
+    const video = ALL_VIDEOS_BY_ID[answer.videoId];
+    return {
+      mode, run_id: run.id, player: run.name, player_key: run.nameKey || normalizeName(run.name || ""),
+      started_at: run.startedAt || null, completed_at: run.completedAt || null,
+      question: answer.questionNumber ?? null, video_id: answer.videoId,
+      video: answer.videoLabel || video?.label || answer.videoId,
+      video_set: answer.sourceGroup || video?.sourceGroup || answer.categoryLabel || "Unknown",
+      choice: answer.choice || "undecided", correct_answer: answer.expectedChoice || video?.correctChoice || null,
+      correct: answer.correct === true, response_seconds: answer.responseSeconds ?? null,
+      clip_time_at_pick_seconds: answer.videoCurrentTimeSeconds ?? null,
+      clip_duration_seconds: answer.videoDurationSeconds ?? null,
+      halfway_point_seconds: answer.videoHalfSeconds ?? null, delta_vs_half_seconds: answer.secondsFromHalf ?? null,
+      half_position: answer.halfComparison || null, clip_progress_percent: typeof answer.videoProgress === "number" ? decimalPercent(answer.videoProgress) : null,
+      double_down: Boolean(answer.doubleDown), crowd_bonus: answer.crowdBonus ?? 0,
+      hot_hand: Boolean(answer.streakBonusApplied), coins_before: answer.coinsBefore ?? null, coins_after: answer.coinsAfter ?? null,
+      pid: answer.pid ?? video?.pid ?? null, pid_group: answer.categoryId || video?.pidGroup || null,
+      answered_at: answer.answeredAt || null,
+    };
+  }));
+  const runs = records.map(run => {
+    const count = run.totalQuestions ?? run.answers?.length ?? 0;
+    const correct = run.totalCorrect ?? (run.answers || []).filter(answer => answer.correct).length;
+    return {mode, run_id: run.id, player: run.name, player_key: run.nameKey || normalizeName(run.name || ""),
+      questions: count, correct, accuracy_percent: count ? decimalPercent(correct / count) : null,
+      coins: run.finalCoins ?? run.coins ?? null, best_streak: run.bestStreak ?? longestCorrectStreak(run.answers || []),
+      started_at: run.startedAt || null, completed_at: run.completedAt || null,
+      status: run.completedAt || run.isCompleted ? "Finished" : "In progress",
+      answer_details_available: run.answers?.length || 0};
+  });
+  const grouped = (rows, key) => {
+    const groups = new Map();
+    for (const row of rows) {
+      const id = key(row);
+      if (!groups.has(id)) groups.set(id, []);
+      groups.get(id).push(row);
+    }
+    return [...groups.values()];
+  };
+  const mean = values => {
+    const finite = values.filter(value => typeof value === "number" && Number.isFinite(value));
+    return finite.length ? finite.reduce((sum, value) => sum + value, 0) / finite.length : null;
+  };
+  const users = grouped(runs, row => row.player_key).map(attempts => {
+    const latest = attempts[attempts.length - 1], first = attempts[0];
+    const picks = answers.filter(answer => answer.player_key === latest.player_key);
+    const questions = attempts.reduce((sum, row) => sum + row.questions, 0);
+    const correct = attempts.reduce((sum, row) => sum + row.correct, 0);
+    const accuracies = attempts.map(row => row.accuracy_percent).filter(value => value !== null);
+    return {mode, player: latest.player, attempts: attempts.length, questions, correct,
+      accuracy_percent: questions ? decimalPercent(correct / questions) : null,
+      first_accuracy_percent: first.accuracy_percent, latest_accuracy_percent: latest.accuracy_percent,
+      best_accuracy_percent: accuracies.length ? Math.max(...accuracies) : null,
+      growth_percentage_points: first.accuracy_percent !== null && latest.accuracy_percent !== null ? latest.accuracy_percent - first.accuracy_percent : null,
+      latest_coins: latest.coins, average_response_seconds: mean(picks.map(row => row.response_seconds)),
+      average_clip_time_at_pick_seconds: mean(picks.map(row => row.clip_time_at_pick_seconds)),
+      double_downs: picks.filter(row => row.double_down).length,
+      crowd_bonus_coins: picks.reduce((sum, row) => sum + row.crowd_bonus, 0),
+      answer_details_available: picks.length, latest_completed_at: latest.completed_at};
+  });
+  const catalog = ALL_VIDEOS.filter(video => mode === "quick" ? video.sectionId === "low-energy" : video.sectionId === "market");
+  const videoMap = new Map(catalog.map(video => [video.id, {id:video.id,label:video.label,sourceGroup:video.sourceGroup,correctChoice:video.correctChoice}]));
+  for (const answer of answers) if (!videoMap.has(answer.video_id)) videoMap.set(answer.video_id,{id:answer.video_id,label:answer.video,sourceGroup:answer.video_set,correctChoice:answer.correct_answer});
+  const videos = [...videoMap.values()].map(video => {
+    const picks = answers.filter(answer => answer.video_id === video.id), count = picks.length;
+    const track = picks.filter(row => row.choice === "track").length, cascade = picks.filter(row => row.choice === "cascade").length;
+    const correct = picks.filter(row => row.correct).length;
+    return {mode, video_id:video.id, video:video.label, video_set:video.sourceGroup, correct_answer:video.correctChoice,
+      attempts:count, unique_players:new Set(picks.map(row => row.player_key)).size,
+      track_picks:track, cascade_picks:cascade, undecided_picks:count-track-cascade,
+      track_percent:count ? decimalPercent(track/count) : null, cascade_percent:count ? decimalPercent(cascade/count) : null,
+      correct, accuracy_percent:count ? decimalPercent(correct/count) : null,
+      average_response_seconds:mean(picks.map(row => row.response_seconds)),
+      average_clip_time_at_pick_seconds:mean(picks.map(row => row.clip_time_at_pick_seconds))};
+  });
+  const sets = grouped(answers, row => JSON.stringify([row.player_key,row.video_set])).map(picks => ({mode,
+    player:picks[0].player, video_set:picks[0].video_set, answers:picks.length,
+    correct:picks.filter(row => row.correct).length,
+    accuracy_percent:decimalPercent(picks.filter(row => row.correct).length/picks.length),
+    average_response_seconds:mean(picks.map(row => row.response_seconds))}));
+  const events = (state.analyticsEvents || state.recentAnalyticsEvents || []).filter(event => event.mode === mode);
+  const eventRows = events.map(event => ({timestamp:event.timestamp,mode:event.mode,event:event.type,
+    player:event.nameKey || null,session_id:event.sessionId || null,run_id:event.runId || null,
+    video:event.videoId || event.videoSrc || null,detail:JSON.stringify(Object.fromEntries(Object.entries(event).filter(([key]) => !["timestamp","mode","type","nameKey","sessionId","runId","videoId","videoSrc","id"].includes(key))))}));
+  const engagement = (items, key, column) => grouped(items,key).map(group => ({mode,[column]:key(group[0]),
+    events:group.length, sessions:new Set(group.map(event => event.sessionId).filter(Boolean)).size,
+    plays:group.filter(event => event.type === "video_play").length,
+    pauses:group.filter(event => event.type === "video_pause").length,
+    seeks:group.filter(event => ["video_seek","video_seeked","video_seeking"].includes(event.type)).length,
+    help_opens:group.filter(event => event.type === "help_opened").length,
+    first_activity:group.map(event => event.timestamp).sort()[0],last_activity:group.map(event => event.timestamp).sort().at(-1)}));
+  const eventUsers = engagement(events, event => event.nameKey || "Anonymous", "player");
+  const eventVideoKey = event => {
+    if (event.videoId) return event.videoId;
+    try {
+      const pathname = decodeURIComponent(new URL(event.videoSrc, window.location.href).pathname);
+      return pathname.includes("/videos/") ? pathname.split("/videos/")[1] : simplifyVideoRef(pathname);
+    } catch { return simplifyVideoRef(event.videoSrc); }
+  };
+  const eventVideos = engagement(events.filter(event => event.videoId || event.videoSrc), eventVideoKey, "video");
+  const types = grouped(events,event => event.type).map(group => ({mode,event:group[0].type,count:group.length}));
+  const define = (title,note,rows,keys) => ({title,note,rows,columns:keys.split(" ").map(key => [key,key.replaceAll("_"," ")]),fileName:`neutrino-${mode}-${title.toLowerCase().replaceAll(/[^a-z0-9]+/g,"-")}.csv`});
+  return {
+    users:define("Per-user performance","All retained attempts, weighted accuracy, growth, scoring, and decision timing.",users,"mode player attempts questions correct accuracy_percent first_accuracy_percent latest_accuracy_percent best_accuracy_percent growth_percentage_points latest_coins average_response_seconds average_clip_time_at_pick_seconds double_downs crowd_bonus_coins answer_details_available latest_completed_at"),
+    videos:define("Per-video responses","Actual submitted answers across every retained attempt. No seeded votes are included; unanswered clips have no accuracy value.",videos,"mode video_id video video_set correct_answer attempts unique_players track_picks cascade_picks undecided_picks track_percent cascade_percent correct accuracy_percent average_response_seconds average_clip_time_at_pick_seconds"),
+    runs:define("All run results","One row per retained run, including repeated attempts by the same player.",runs,"mode run_id player player_key questions correct accuracy_percent coins best_streak status started_at completed_at answer_details_available"),
+    answers:define("All answer details","One row per recorded answer, with choices, answer keys, timing, wagers, streaks, and crowd bonuses.",answers,"mode run_id player player_key question video_id video video_set choice correct_answer correct response_seconds clip_time_at_pick_seconds clip_duration_seconds halfway_point_seconds delta_vs_half_seconds half_position clip_progress_percent double_down crowd_bonus hot_hand coins_before coins_after pid pid_group started_at answered_at completed_at"),
+    sets:define("Per-user video sets","Correctness and decision timing for each player and video set.",sets,"mode player video_set answers correct accuracy_percent average_response_seconds"),
+    "activity-users":define("Per-user activity","Activity in the retained event window, including anonymous sessions.",eventUsers,"mode player events sessions plays pauses seeks help_opens first_activity last_activity"),
+    "activity-videos":define("Per-video activity","Playback and interaction activity in the retained event window.",eventVideos,"mode video events sessions plays pauses seeks help_opens first_activity last_activity"),
+    "activity-types":define("Activity event totals","Event counts for this mode in the retained window.",types,"mode event count"),
+    "activity-events":define("All retained activity events","Raw activity events available from the server, limited to its rolling 5,000-event window.",eventRows,"timestamp mode event player session_id run_id video detail"),
+  };
+}
+
+function renderReportNavigation() {
+  const mode = getReportMode();
+  return `<nav class="button-row report-navigation" aria-label="Report game mode">${["demo","friday","quiz","quick","endless"].map(id => `<button class="${id === mode ? "primary-button" : "ghost-button"}" data-action="select-analysis-mode" data-mode="${id}" aria-pressed="${id === mode}">${escapeHtml(MODE_CONFIGS[id]?.title || id)}</button>`).join("")}</nav><p class="subtle-copy">Viewing reports does not change your current game. Gameplay reports use the current score history. Activity reports include retained activity from before the reset.</p>`;
+}
+
+function renderDetailedReports() {
+  const mode = getReportMode(), status = state.reportStatus?.[mode];
+  const loading = !status || status === "loading";
+  const statusCopy = loading ? "Loading full report data…" : status === "error" ? "Shared results could not load. Retry to refresh the reports." : "Full report data loaded. CSV downloads include every available row; tables preview the first 50.";
+  return `<section class="report-status" role="status"><p>${statusCopy}</p><button class="ghost-button" data-action="select-analysis-mode" data-mode="${mode}">Refresh reports</button></section>${state.analyticsError ? `<p class="subtle-copy">Activity reports are unavailable: ${escapeHtml(state.analyticsError)}</p>` : ""}${mode === "endless" ? `<p class="subtle-copy">Endless run totals use available leaderboard and device saves. Detailed answers cover only the latest ten picks retained per local run; they are not a complete lifetime history. This host may not support shared Endless results.</p>` : ""}${Object.entries(getDetailedReportDefinitions(mode)).map(([id,definition]) => renderAnalysisTable({title:definition.title,note:`${definition.note} ${definition.rows.length} rows available.`,report:`detail-${id}`,headers:definition.columns.map(column => escapeHtml(column[1])),rows:definition.rows.slice(0,50).map(row => definition.columns.map(([key]) => escapeHtml(row[key] === null || row[key] === undefined ? "—" : typeof row[key] === "number" && !Number.isInteger(row[key]) ? row[key].toFixed(2) : String(row[key])))),ready:id.startsWith("activity-") ? state.analyticsLoaded && !state.analyticsError : ["ready","partial"].includes(status)})).join("")}`;
+}
+
 function renderAnalysisModal() {
-  if (state.showAnalysis && getActiveMode() === "endless") return renderAnalysisModalShell({eyebrow:"Endless Mode",title:"Endless leaderboard",description:"Best run per player, ranked by correct calls, then accuracy and coins. In-progress checkpoints count.",body:renderEndlessSyncStatus()+renderEndlessLeaderboard()});
-  if (state.showAnalysis && getActiveMode() === "demo") {
-    return renderAnalysisModalShell({ eyebrow: "Presentation mode", title: "Global collaborator results", description: "Collaborator scores are shared across devices. Research quiz results remain in their own categories.", body: renderCollaboratorSyncStatus() + renderLeaderboardTable(buildLeaderboard(state.demoPlayers), null, "demo") });
+  if (state.showAnalysis && getReportMode() === "endless") return renderAnalysisModalShell({eyebrow:"Endless Mode",title:"Endless Analysis & Export",description:"Run totals, available answer details, and activity reports for Endless Mode.",body:renderEndlessSyncStatus()+renderEndlessLeaderboard()});
+  if (state.showAnalysis && getReportMode() === "demo") {
+    return renderAnalysisModalShell({ eyebrow: "Collaborator Game", title: "Collaborator Analysis & Export", description: "Shared standings and downloadable per-user, per-run, and per-video reports.", body: renderCollaboratorSyncStatus() + renderLeaderboardTable(buildLeaderboard(state.demoPlayers), null, "demo") });
   }
   if (!state.showAnalysis) {
     return "";
   }
 
-  return getActiveMode() === "quick"
+  return getReportMode() === "quick"
     ? renderQuickQuizAnalysisModal()
-    : getActiveMode() === "quiz"
+    : getReportMode() === "quiz"
       ? renderQuizAnalysisModal()
       : renderFridayAnalysisModal();
 }
@@ -2214,7 +2371,9 @@ function renderAnalysisModalShell({ eyebrow, title, description, body }) {
             <button type="button" class="ghost-button" data-action="close-analysis">Close</button>
           </div>
 
+          ${renderReportNavigation()}
           ${body}
+          ${renderDetailedReports()}
         </div>
       </section>
     </div>
@@ -2367,7 +2526,7 @@ function renderHelpModal() {
   `;
 }
 
-function renderAnalysisTable({ title, note, report, headers, rows }) {
+function renderAnalysisTable({ title, note, report, headers, rows, ready = state.reportStatus?.[getReportMode()] === "ready" }) {
   return `
     <section class="panel">
       <div class="panel-inner">
@@ -2376,7 +2535,7 @@ function renderAnalysisTable({ title, note, report, headers, rows }) {
             <h3 class="card-title">${title}</h3>
             <p class="table-note">${note}</p>
           </div>
-          <button type="button" class="secondary-button" data-action="download-csv" data-report="${report}">
+          <button type="button" class="secondary-button" data-action="download-csv" data-report="${report}" ${ready ? "" : "disabled"}>
             Download CSV
           </button>
         </div>
@@ -2576,14 +2735,23 @@ async function fetchLeaderboardData(url, mode) {
 }
 
 async function syncAllDataFromServer({force = false} = {}) {
-  const mode = getActiveMode();
+  const mode = state.showAnalysis ? getReportMode() : getActiveMode();
   const key = `${mode}:${state.showAnalysis}`;
   const pendingUpload = mode === "demo" && state.pendingCollaboratorRuns.length;
   if (!force && !pendingUpload && Date.now() - (lastModeSync.get(key) || 0) < 15000) return;
   lastModeSync.set(key, Date.now());
+  if (state.showAnalysis) {
+    state.reportStatus = {...state.reportStatus, [mode]: "loading"};
+    render();
+  }
   const sync = {endless: () => syncEndlessFromServer({refresh:true}), demo: syncCollaboratorPlayersFromServer, friday: syncPlayersFromServer,
     quiz: syncQuizPlayersFromServer, quick: syncQuickQuizPlayersFromServer}[mode];
-  await Promise.all([sync(), ...(state.showAnalysis && !["demo", "endless"].includes(mode) ? [syncAnalyticsFromServer()] : [])]);
+  await Promise.all([sync(), ...(state.showAnalysis ? [syncAnalyticsFromServer()] : [])]);
+  if (state.showAnalysis) {
+    const error = {demo:state.collaboratorLeaderboardError,friday:state.scheduleError,quiz:state.quizLeaderboardError,quick:state.quickQuizError,endless:state.endlessError}[mode];
+    state.reportStatus = {...state.reportStatus, [mode]: error ? mode === "endless" ? "partial" : "error" : "ready"};
+    render();
+  }
 }
 
 async function syncLeaderboardsFromServer() {
@@ -2663,7 +2831,7 @@ async function syncQuickQuizPlayersFromServer() {
 
 async function syncAnalyticsFromServer() {
   try {
-    const payload = await fetchSharedJson(API_ANALYTICS_URL);
+    const payload = await fetchSharedJson(state.showAnalysis ? `${API_ANALYTICS_URL}?view=full` : API_ANALYTICS_URL);
     applyAnalyticsPayload(payload);
     state.analyticsLoaded = true;
     state.analyticsError = null;
@@ -2812,6 +2980,7 @@ function applyAnalyticsPayload(payload) {
   state.recentAnalyticsEvents = Array.isArray(payload?.recentEvents)
     ? payload.recentEvents
     : [];
+  if (Array.isArray(payload?.events)) state.analyticsEvents = payload.events;
 }
 
 function beginRun(rawName, mode = "demo") {
@@ -4361,13 +4530,13 @@ function updateAnalysisButton() {
 
   const playerCount = getPlayersForMode(getActiveMode()).length;
   button.disabled = false;
-  if (getActiveMode() === "endless") { button.textContent = "Endless leaderboard"; return; }
   button.textContent = playerCount
     ? `Analysis & Export (${playerCount})`
     : "Analysis & Export";
 }
 
 function downloadCsv(report) {
+  if (state.showAnalysis && state.reportStatus?.[getReportMode()] === "loading") return;
   const definitions = {
     "user-summary": {
       fileName: "neutrino-user-summary.csv",
@@ -4569,13 +4738,13 @@ function downloadCsv(report) {
     },
   };
 
-  const definition = definitions[report];
+  const definition = report?.startsWith("detail-") ? getDetailedReportDefinitions()[report.slice(7)] : definitions[report];
 
   if (!definition) {
     return;
   }
 
-  const csv = serializeCsv(definition.rows);
+  const csv = serializeCsv(definition.rows, definition.columns?.map(column => column[0]));
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -4588,12 +4757,8 @@ function downloadCsv(report) {
   URL.revokeObjectURL(url);
 }
 
-function serializeCsv(rows) {
-  if (!rows.length) {
-    return "";
-  }
-
-  const headers = Object.keys(rows[0]);
+function serializeCsv(rows, headers = Object.keys(rows[0] || {})) {
+  if (!headers.length) return "";
   const lines = [
     headers.join(","),
     ...rows.map((row) =>
@@ -4607,7 +4772,7 @@ function serializeCsv(rows) {
 }
 
 function csvEscape(value) {
-  const stringValue = `${value ?? ""}`;
+  const stringValue = typeof value === "string" && /^[=+@\-\t\r]/.test(value) ? `'${value}` : `${value ?? ""}`;
 
   if (/[",\n]/.test(stringValue)) {
     return `"${stringValue.replace(/"/g, '""')}"`;

@@ -187,9 +187,9 @@ class Store:
                 )
         return {"accepted": len(events)}
 
-    def analytics(self):
+    def analytics(self, full=False):
         with self.pool.connection() as conn:
             # Preserve the existing dashboard's rolling 5,000-event summary.
             rows = conn.execute("SELECT event FROM analytics_events ORDER BY occurred_at DESC, event_id DESC LIMIT 5000").fetchall()
         events = [row["event"] for row in reversed(rows)]
-        return rules.serialize_analytics_payload({"events": events, "updatedAt": rules.now_iso()})
+        return rules.serialize_analytics_payload({"events": events, "updatedAt": rules.now_iso()}, full=full)

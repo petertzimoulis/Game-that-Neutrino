@@ -214,7 +214,7 @@ export default {
 
       if (url.pathname === "/api/analytics") {
         const db = await loadCurrentAnalyticsDb(env);
-        return jsonResponse(serializeAnalyticsPayload(db));
+        return jsonResponse(serializeAnalyticsPayload(db, url.searchParams.get("view") === "full"));
       }
 
       if (url.pathname === "/api/analytics-events" && request.method === "POST") {
@@ -754,12 +754,13 @@ function buildAnalyticsSummary(events) {
   };
 }
 
-function serializeAnalyticsPayload(db) {
+function serializeAnalyticsPayload(db, full = false) {
   const events = Array.isArray(db.events) ? db.events : [];
   return {
     updatedAt: db.updatedAt,
     summary: buildAnalyticsSummary(events),
     recentEvents: events.slice(-MAX_RECENT_ANALYTICS_EVENTS),
+    ...(full ? {events} : {}),
   };
 }
 

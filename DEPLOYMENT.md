@@ -2,6 +2,8 @@
 
 The public Sites deployment was reset on October 15, 2026. Its active scores and trophies use `data/reset-20261015-1/` in GitHub; earlier files directly under `data/` are historical backups. Import the active directory when moving current scores to independent hosting. The reset also gives browser saves a fresh namespace and rejects score uploads from older open tabs. Analytics remain in their original location.
 
+**Analysis & Export** includes a mode selector, per-user performance and growth, per-video responses, all retained runs and answers, video-set breakdowns, and activity reports per user and video. Existing Friday and research exports remain available. Gameplay reports use the active score history; activity reports include the rolling 5,000-event window, including events from before the reset. `GET /api/analytics?view=full` returns that complete retained event window, while the ordinary endpoint keeps its compact recent-event preview. Tables preview 50 rows; detailed CSV exports include all available rows and preserve headers when empty. Endless totals use available leaderboard/device saves, while detailed answers are explicitly limited to the ten most recent picks retained per local run.
+
 The production path uses PostgreSQL, Gunicorn, nginx, and Caddy. It has no ChatGPT hosting, GitHub API, or other external application dependency at runtime. Videos are served by nginx and can optionally use your own media CDN. The older `server.py` entry point and `worker/` directory are legacy development/hosting paths; they are not launched by this setup.
 
 ## Start on a server

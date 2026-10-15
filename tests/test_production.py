@@ -103,6 +103,21 @@ class ProductionTests(unittest.TestCase):
             response = client.get('/api/history?mode=demo&cursor=%7B%7D')
             self.assertEqual(response.status_code, 400)
 
+    def test_full_analytics_report_keeps_more_than_recent_preview(self):
+        for start in range(0, 300, 100):
+            self.store.save_events([{'id': f'full-report-{i}', 'type': 'video_play',
+                                    'timestamp': '2026-10-15T12:00:00Z', 'mode': 'demo',
+                                    'nameKey': 'report player', 'videoId': 'clip-0'}
+                                   for i in range(start, start + 100)])
+        with self.app.test_client() as client:
+            compact = client.get('/api/analytics').get_json()
+            full = client.get('/api/analytics?view=full').get_json()
+        self.assertNotIn('events', compact)
+        self.assertEqual(len(compact['recentEvents']), 250)
+        self.assertEqual(len(full['events']), 300)
+        self.assertEqual(full['summary']['totalEvents'], 300)
+        self.assertEqual(len({event['id'] for event in full['events']}), 300)
+
     def test_events_are_idempotent_and_small_ack(self):
         event = {'id': 'event-1', 'type': 'page_opened', 'timestamp': '2026-10-15T12:00:00Z', 'mode': 'demo'}
         for _ in range(2):

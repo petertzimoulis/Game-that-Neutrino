@@ -12,7 +12,7 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 from accounts import AccountStore, AccountError, ROUTES as ACCOUNT_ROUTES, MAX_BODY, session_cookie
 from endless import EndlessStore, EndlessError
@@ -551,13 +551,14 @@ def build_analytics_summary(events: list[dict]) -> dict:
     }
 
 
-def serialize_analytics_payload(db: dict) -> dict:
+def serialize_analytics_payload(db: dict, full: bool = False) -> dict:
     events = db.get("events", [])
 
     return {
         "updatedAt": db.get("updatedAt"),
         "summary": build_analytics_summary(events),
         "recentEvents": events[-MAX_RECENT_ANALYTICS_EVENTS:],
+        **({"events": events} if full else {}),
     }
 
 
@@ -630,7 +631,7 @@ class SharedLeaderboardHandler(SimpleHTTPRequestHandler):
             with DB_LOCK:
                 db = load_current_analytics_db()
 
-            self.respond_json(HTTPStatus.OK, serialize_analytics_payload(db))
+            self.respond_json(HTTPStatus.OK, serialize_analytics_payload(db, parse_qs(parsed_path.query).get("view") == ["full"]))
             return
 
         super().do_GET()
