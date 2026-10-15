@@ -1837,7 +1837,16 @@
       "timestamp": "2026-10-15T20:33:55.949Z",
       "mode": "demo",
       "nameKey": null
+    },
+    {
+      "id": "session-1792096491964-u2pkc3xx",
+      "sessionId": "session-1792095769986-k62txkq4",
+      "type": "visibility_changed",
+      "timestamp": "2026-10-15T20:34:51.964Z",
+      "mode": "demo",
+      "nameKey": null,
+      "visibilityState": "hidden"
     }
   ],
-  "updatedAt": "2026-10-15T20:34:08.759Z"
+  "updatedAt": "2026-10-15T20:34:52.200Z"
 }
