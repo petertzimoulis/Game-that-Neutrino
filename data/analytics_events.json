@@ -1829,7 +1829,15 @@
       "mode": "demo",
       "nameKey": null,
       "visibilityState": "hidden"
+    },
+    {
+      "id": "session-1792096435949-g0wo8i9a",
+      "sessionId": "session-1792096435945-i5dsz6oa",
+      "type": "page_opened",
+      "timestamp": "2026-10-15T20:33:55.949Z",
+      "mode": "demo",
+      "nameKey": null
     }
   ],
-  "updatedAt": "2026-10-15T20:34:07.438Z"
+  "updatedAt": "2026-10-15T20:34:08.759Z"
 }
