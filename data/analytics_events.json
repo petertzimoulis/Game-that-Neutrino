@@ -1984,7 +1984,16 @@
       "durationSeconds": null,
       "playbackRate": 2,
       "paused": false
+    },
+    {
+      "id": "session-1792096774477-dqn5fxc5",
+      "sessionId": "session-1792096738059-gejq3g0v",
+      "type": "visibility_changed",
+      "timestamp": "2026-10-15T20:39:34.477Z",
+      "mode": "endless",
+      "nameKey": null,
+      "visibilityState": "hidden"
     }
   ],
-  "updatedAt": "2026-10-15T20:39:28.243Z"
+  "updatedAt": "2026-10-15T20:39:34.694Z"
 }
