@@ -2338,3 +2338,12 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 .coin-movement-pop { display: inline-flex; align-items: center; gap: 8px; animation: coin-movement-pop 550ms ease-out both; }
 @keyframes coin-movement-pop { from { opacity: .4; transform: translateY(10px) scale(.9); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @media (prefers-reduced-motion: reduce) { .coin-movement-pop { animation: none; } }
+
+.about-bio-heading { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, 180px); align-items: center; gap: 24px; margin-bottom: 24px; }
+.about-bio-heading .about-name { margin: 18px 0 0; font-size: clamp(2.35rem, 4vw, 4rem); }
+.about-portrait { display: block; width: 100%; height: auto; border-radius: 20px; border: 1px solid var(--line-strong); }
+@media (max-width: 540px) {
+  .about-bio-heading { grid-template-columns: 1fr; gap: 24px; }
+  .about-bio-heading .about-name { font-size: clamp(2.6rem, 10vw, 4.5rem); }
+  .about-portrait { max-width: 240px; }
+}

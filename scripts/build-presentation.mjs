@@ -3,7 +3,7 @@ import path from 'node:path';
 const root = path.resolve(import.meta.dirname, '..');
 fs.mkdirSync(path.join(root, 'dist'), {recursive: true});
 const assets = {};
-for (const [name, type] of [['index.html','text/html; charset=utf-8'],['about-me.html','text/html; charset=utf-8'],['4.0.html','text/html; charset=utf-8'],['app.js','text/javascript; charset=utf-8'],['accounts.js','text/javascript; charset=utf-8'],['endless.js','text/javascript; charset=utf-8'],['site-config.js','text/javascript; charset=utf-8'],['styles.css','text/css; charset=utf-8'],['coin.png','image/png']]) {
+for (const [name, type] of [['index.html','text/html; charset=utf-8'],['about-me.html','text/html; charset=utf-8'],['4.0.html','text/html; charset=utf-8'],['app.js','text/javascript; charset=utf-8'],['accounts.js','text/javascript; charset=utf-8'],['endless.js','text/javascript; charset=utf-8'],['site-config.js','text/javascript; charset=utf-8'],['styles.css','text/css; charset=utf-8'],['coin.png','image/png'],['peter-tzimoulis.jpg','image/jpeg']]) {
   assets['/' + name] = { type, body: fs.readFileSync(path.join(root,name)).toString('base64') };
   fs.copyFileSync(path.join(root, name), path.join(root, 'dist', name));
 }
