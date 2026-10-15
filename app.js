@@ -14,6 +14,7 @@ const STORAGE_KEYS = {
   accountDirty: "game-that-neutrino-save-dirty",
   savedEndlessRun: "game-that-neutrino-endless-run",
   endlessOutbox: "game-that-neutrino-endless-outbox",
+  endlessProfiles: "game-that-neutrino-endless-profiles",
 };
 for (const key of Object.keys(STORAGE_KEYS)) STORAGE_KEYS[key] += `-${GAME_STATE_EPOCH}`;
 const GUEST_STORAGE_KEYS = {...STORAGE_KEYS};
@@ -82,12 +83,12 @@ const ACHIEVEMENTS = [
   {id: "perfect-demo", title: "Perfect five", description: "Finish a five-question collaborator game with every answer correct."},
   {id: "finisher", title: "Mission complete", description: "Finish a run in any mode."},
   {id: "explorer", title: "Ice explorer", description: "Finish a collaborator game covering all four video sets."},
-  {id: "endless-10", title: "Getting into orbit", description: "Answer 10 questions in one Endless run."},
-  {id: "endless-50", title: "Deep in the ice", description: "Answer 50 questions in one Endless run."},
-  {id: "endless-100", title: "Full rotation", description: "Answer 100 questions in one Endless run."},
-  {id: "endless-250", title: "Beyond the horizon", description: "Answer 250 questions in one Endless run."},
+  {id: "endless-10", title: "Getting into orbit", description: "Answer 10 questions in Endless Mode across your visits."},
+  {id: "endless-50", title: "Deep in the ice", description: "Answer 50 questions in Endless Mode across your visits."},
+  {id: "endless-100", title: "Full rotation", description: "Answer 100 questions in Endless Mode across your visits."},
+  {id: "endless-250", title: "Beyond the horizon", description: "Answer 250 questions in Endless Mode across your visits."},
   {id: "endless-streak-10", title: "Unbroken signal", description: "Make 10 correct calls in a row in Endless Mode."},
-  {id: "endless-correct-100", title: "Willem Trophy", description: "Make 100 correct calls in one Endless run."},
+  {id: "endless-correct-100", title: "Willem Trophy", description: "Make 100 correct calls in Endless Mode across your visits."},
 ];
 const CROWD_BONUS_COINS = 2;
 const DEMO_SECTION = {
@@ -158,7 +159,7 @@ const QUICK_QUIZ_BASELINE_RESULTS = {
 };
 const SEEDED_PUBLIC_LINE_COUNTS = {};
 const MODE_CONFIGS = {
-  endless: {id:"endless",title:"Endless Mode",leaderboardTitle:"Endless leaderboard",startButtonLabel:"Start endless run"},
+  endless: {id:"endless",title:"Endless Mode",leaderboardTitle:"Endless leaderboard",startButtonLabel:"Continue Endless Mode"},
   demo: { id: "demo", title: "Collaborator Game", leaderboardTitle: "Global collaborator leaderboard", startButtonLabel: "Start collaborator game" },
   friday: {
     id: "friday",
@@ -210,6 +211,7 @@ const state = {
   endlessLoaded: false,
   endlessError: null,
   savedEndlessRun: loadStorage(STORAGE_KEYS.savedEndlessRun, null),
+  endlessProfiles: loadStorage(STORAGE_KEYS.endlessProfiles, {}),
   pendingEndlessRuns: loadStorage(STORAGE_KEYS.endlessOutbox, []),
   currentRun: getInitialRun(),
   lastName: loadStorage(STORAGE_KEYS.lastName, ""),
@@ -812,7 +814,7 @@ function renderLandingView() {
               : `
                 <div class="empty-state">
                   <p class="empty-state-copy">
-                    ${activeMode === "endless" ? "Make your first call to join the Endless leaderboard. Your best run counts, and saved checkpoints update while you play." : activeMode === "demo"
+                    ${activeMode === "endless" ? "Make your first call to join the Endless leaderboard. Your lifetime progress carries over every time you return." : activeMode === "demo"
                       ? "Finish a collaborator game to add your name, coin score, and accuracy to the global leaderboard."
                       : activeMode === "quick"
                       ? "Completed 4.0 quizzes will land here with their coin total, correct answers, accuracy, and completion time. This board stays separate from Friday and Learning Quiz results."
@@ -1840,7 +1842,7 @@ function getReportRecords(mode = getReportMode()) {
   const sources = {
     demo: [state.demoPlayers, state.demoHistory], friday: [state.players, state.playerHistory],
     quiz: [state.quizPlayers, state.quizHistory], quick: [state.quickQuizPlayers, state.quickQuizHistory],
-    endless: [state.endlessPlayers, [state.currentRun, state.savedEndlessRun, state.lastCompletedRun,
+    endless: [state.endlessPlayers, [state.currentRun, state.savedEndlessRun, ...Object.values(state.endlessProfiles || {}), state.lastCompletedRun,
       ...loadStorage(STORAGE_KEYS.completedRuns, [])].filter(run => run?.mode === "endless")],
   };
   const records = new Map();
@@ -1880,7 +1882,7 @@ function getDetailedReportDefinitions(mode = getReportMode()) {
     const correct = run.totalCorrect ?? (run.answers || []).filter(answer => answer.correct).length;
     return {mode, run_id: run.id, player: run.name, player_key: run.nameKey || normalizeName(run.name || ""),
       questions: count, correct, accuracy_percent: count ? decimalPercent(correct / count) : null,
-      coins: run.finalCoins ?? run.coins ?? null, best_streak: run.bestStreak ?? longestCorrectStreak(run.answers || []),
+      coins: run.finalCoins ?? run.coins ?? null, best_streak: run.bestStreak ?? longestCorrectStreak(run.answers || []), wallet_resets: run.walletResets || 0,
       started_at: run.startedAt || null, completed_at: run.completedAt || null,
       status: run.completedAt || run.isCompleted ? "Finished" : "In progress",
       answer_details_available: run.answers?.length || 0};
@@ -1909,7 +1911,7 @@ function getDetailedReportDefinitions(mode = getReportMode()) {
       first_accuracy_percent: first.accuracy_percent, latest_accuracy_percent: latest.accuracy_percent,
       best_accuracy_percent: accuracies.length ? Math.max(...accuracies) : null,
       growth_percentage_points: first.accuracy_percent !== null && latest.accuracy_percent !== null ? latest.accuracy_percent - first.accuracy_percent : null,
-      latest_coins: latest.coins, average_response_seconds: mean(picks.map(row => row.response_seconds)),
+      latest_coins: latest.coins, wallet_resets: attempts.reduce((sum, row) => sum + row.wallet_resets, 0), average_response_seconds: mean(picks.map(row => row.response_seconds)),
       average_clip_time_at_pick_seconds: mean(picks.map(row => row.clip_time_at_pick_seconds)),
       double_downs: picks.filter(row => row.double_down).length,
       crowd_bonus_coins: picks.reduce((sum, row) => sum + row.crowd_bonus, 0),
@@ -1958,9 +1960,9 @@ function getDetailedReportDefinitions(mode = getReportMode()) {
   const types = grouped(events,event => event.type).map(group => ({mode,event:group[0].type,count:group.length}));
   const define = (title,note,rows,keys) => ({title,note,rows,columns:keys.split(" ").map(key => [key,key.replaceAll("_"," ")]),fileName:`neutrino-${mode}-${title.toLowerCase().replaceAll(/[^a-z0-9]+/g,"-")}.csv`});
   return {
-    users:define("Per-user performance","All retained attempts, weighted accuracy, growth, scoring, and decision timing.",users,"mode player attempts questions correct accuracy_percent first_accuracy_percent latest_accuracy_percent best_accuracy_percent growth_percentage_points latest_coins average_response_seconds average_clip_time_at_pick_seconds double_downs crowd_bonus_coins answer_details_available latest_completed_at"),
+    users:define("Per-user performance","All retained attempts, weighted accuracy, growth, scoring, and decision timing.",users,"mode player attempts questions correct accuracy_percent first_accuracy_percent latest_accuracy_percent best_accuracy_percent growth_percentage_points latest_coins wallet_resets average_response_seconds average_clip_time_at_pick_seconds double_downs crowd_bonus_coins answer_details_available latest_completed_at"),
     videos:define("Per-video responses","Actual submitted answers across every retained attempt. No seeded votes are included; unanswered clips have no accuracy value.",videos,"mode video_id video video_set correct_answer attempts unique_players track_picks cascade_picks undecided_picks track_percent cascade_percent correct accuracy_percent average_response_seconds average_clip_time_at_pick_seconds"),
-    runs:define("All run results","One row per retained run, including repeated attempts by the same player.",runs,"mode run_id player player_key questions correct accuracy_percent coins best_streak status started_at completed_at answer_details_available"),
+    runs:define("All run results","One row per retained run or continuing Endless profile.",runs,"mode run_id player player_key questions correct accuracy_percent coins wallet_resets best_streak status started_at completed_at answer_details_available"),
     answers:define("All answer details","One row per recorded answer, with choices, answer keys, timing, wagers, streaks, and crowd bonuses.",answers,"mode run_id player player_key question video_id video video_set choice correct_answer correct response_seconds clip_time_at_pick_seconds clip_duration_seconds halfway_point_seconds delta_vs_half_seconds half_position clip_progress_percent double_down crowd_bonus hot_hand coins_before coins_after pid pid_group started_at answered_at completed_at"),
     sets:define("Per-user video sets","Correctness and decision timing for each player and video set.",sets,"mode player video_set answers correct accuracy_percent average_response_seconds"),
     "activity-users":define("Per-user activity","Activity in the retained event window, including anonymous sessions.",eventUsers,"mode player events sessions plays pauses seeks help_opens first_activity last_activity"),
@@ -3293,7 +3295,7 @@ async function advanceRun() {
 }
 
 async function finalizeRun() {
-  if (state.currentRun?.mode === "endless") { finishEndlessRun(); return; }
+  if (state.currentRun?.mode === "endless") { pauseEndlessRun(); return; }
   const run = state.currentRun;
 
   if (!run) {
@@ -5043,7 +5045,7 @@ function renderGameMechanics() {
     <article><span class="mechanic-number">01</span><strong>Make the call</strong><p>Start with 10 coins. Correct: +1. Incorrect: −1. Watch, replay, then choose.</p></article>
     <article><span class="mechanic-number">02</span><strong>Build a hot hand</strong><p>After two correct calls in a row, each next correct call earns +2 until you miss.</p></article>
     <article><span class="mechanic-number">03</span><strong>Raise the stakes</strong><p>Double or Nothing: +2 on a hit, −2 on a miss. A hot-hand hit earns +3.</p></article>
-    ${getActiveMode() === "endless" ? `<article><span class="mechanic-number">04</span><strong>Save your place</strong><p>Pause and resume the same run. Guest progress stays on this device; an account lets you continue across devices.</p></article>` : `<article><span class="mechanic-number">04</span><strong>Go against the crowd</strong><p>Choose an answer with under 25% of recorded votes for +2 extra coins when your answer is correct. No votes means no bonus.</p></article>`}
+    ${getActiveMode() === "endless" ? `<article><span class="mechanic-number">04</span><strong>Save your place</strong><p>Your player keeps the same wallet and lifetime progress across visits. Reset to 10 coins whenever you want; your lifetime stats stay saved.</p></article>` : `<article><span class="mechanic-number">04</span><strong>Go against the crowd</strong><p>Choose an answer with under 25% of recorded votes for +2 extra coins when your answer is correct. No votes means no bonus.</p></article>`}
   </div>`;
 }
 

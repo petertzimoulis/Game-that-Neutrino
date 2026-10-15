@@ -13,10 +13,33 @@ function endlessDeck(previousId = null) {
   return deck;
 }
 
+function endlessProfileName(rawName) {
+  return (typeof accountState !== "undefined" && accountState.user ? accountState.user.username : rawName || state.lastName || "").trim();
+}
+
+function endlessProfileKey(name) {
+  return `player:${normalizeName(endlessProfileName(name))}`;
+}
+
+function saveEndlessProfile(run) {
+  if (!run || run.mode !== "endless") return;
+  state.endlessProfiles = {...state.endlessProfiles, [endlessProfileKey(run.name)]: run};
+  saveStorage(STORAGE_KEYS.endlessProfiles, state.endlessProfiles);
+}
+
+function getEndlessProfile(name) {
+  // Adopt the previous single-profile save without ever assigning another guest's game.
+  const saved = state.savedEndlessRun;
+  if (saved && (normalizeName(saved.name) === normalizeName(endlessProfileName(name)) ||
+      (typeof accountState !== "undefined" && accountState.user))) saveEndlessProfile(saved);
+  return state.endlessProfiles?.[endlessProfileKey(name)] || null;
+}
+
 function beginEndlessRun(rawName) {
-  if (state.savedEndlessRun) { resumeEndlessRun(); return; }
-  const name = rawName.trim();
+  const name = endlessProfileName(rawName);
   if (!name || !getCollaboratorVideos().length) return;
+  if (state.currentRun?.mode === "endless") persistEndlessRun();
+  if (getEndlessProfile(name)) { resumeEndlessRun(name); return; }
   state.lastName = name;
   state.selectedMode = "endless";
   state.lastCompletedRun = null;
@@ -25,7 +48,7 @@ function beginEndlessRun(rawName) {
     checkpointKey: endlessKey(), startedAt: new Date().toISOString(),
     videoOrder: endlessDeck(), currentIndex: 0, phase: "question", answers: [],
     totalQuestions: 0, totalCorrect: 0, trackCorrect: 0, cascadeCorrect: 0,
-    coins: 10, correctStreak: 0, bestStreak: 0, questionStartedAt: new Date().toISOString(),
+    coins: 10, walletResets: 0, correctStreak: 0, bestStreak: 0, questionStartedAt: new Date().toISOString(),
   };
   saveStorage(STORAGE_KEYS.lastName, name);
   saveStorage(STORAGE_KEYS.selectedMode, "endless");
@@ -37,6 +60,7 @@ function persistEndlessRun() {
   const run = state.currentRun;
   if (run?.mode !== "endless") return;
   state.savedEndlessRun = run;
+  saveEndlessProfile(run);
   saveStorage(STORAGE_KEYS.savedEndlessRun, run);
   saveStorage(STORAGE_KEYS.currentRun, run);
 }
@@ -52,8 +76,8 @@ function isValidEndlessRun(run) {
     Array.isArray(run.answers) && run.answers.length <= 10 && ["question", "feedback"].includes(run.phase);
 }
 
-function resumeEndlessRun() {
-  const run = state.savedEndlessRun;
+function resumeEndlessRun(rawName = state.savedEndlessRun?.name || state.lastName) {
+  const run = getEndlessProfile(rawName);
   if (!run) return;
   if (!isValidEndlessRun(run)) {
     // A replaced catalog gets a fresh deck while lifetime totals stay intact.
@@ -65,6 +89,8 @@ function resumeEndlessRun() {
   state.currentRun = run;
   state.lastCompletedRun = null;
   state.selectedMode = "endless";
+  state.lastName = run.name;
+  saveStorage(STORAGE_KEYS.lastName, run.name);
   run.questionStartedAt = new Date().toISOString();
   evaluateAchievements(run);
   persistEndlessRun();
@@ -78,7 +104,7 @@ function endlessRecord(run, isCompleted = false) {
     updatedAt: new Date().toISOString(), completedAt: isCompleted ? new Date().toISOString() : null,
     totalQuestions: run.totalQuestions, totalCorrect: run.totalCorrect,
     totalAccuracy: run.totalQuestions ? run.totalCorrect / run.totalQuestions : 0,
-    finalCoins: run.coins, bestStreak: run.bestStreak, isCompleted,
+    finalCoins: run.coins, bestStreak: run.bestStreak, walletResets: run.walletResets || 0, isCompleted,
   };
 }
 
@@ -147,20 +173,28 @@ function pauseEndlessRun() {
   if (typeof saveAccountProgress === "function") void saveAccountProgress();
 }
 
-function finishEndlessRun() {
-  const run = state.currentRun?.mode === "endless" ? state.currentRun : state.savedEndlessRun;
+function resetEndlessWallet(rawName = state.lastName || state.savedEndlessRun?.name) {
+  const run = state.currentRun?.mode === "endless" ? state.currentRun : getEndlessProfile(rawName);
   if (!run) return;
-  if (run.totalQuestions) {
-    evaluateAchievements(run, true);
-    state.lastCompletedRun = {...endlessRecord(run, true), answers: run.answers};
-    queueEndlessCheckpoint(run, true);
-  } else state.lastCompletedRun = null;
-  state.savedEndlessRun = null;
-  state.currentRun = null;
-  state.selectedMode = "endless";
-  saveStorage(STORAGE_KEYS.savedEndlessRun, null);
-  localStorage.removeItem(STORAGE_KEYS.currentRun);
+  const playing = state.currentRun?.mode === "endless";
+  // Advance past an already answered clip before returning to the question view.
+  if (run.phase === "feedback") {
+    const previousId = run.videoOrder[run.currentIndex];
+    run.currentIndex++;
+    if (run.currentIndex >= run.videoOrder.length) { run.videoOrder = endlessDeck(previousId); run.currentIndex = 0; }
+  }
+  run.coins = 10;
+  run.correctStreak = 0;
+  run.walletResets = (run.walletResets || 0) + 1;
+  run.phase = "question";
+  run.questionStartedAt = new Date().toISOString();
+  state.lastCompletedRun = null;
+  if (playing) persistEndlessRun();
+  else { state.savedEndlessRun = run; saveEndlessProfile(run); saveStorage(STORAGE_KEYS.savedEndlessRun, run); }
+  queueEndlessCheckpoint(run);
+  trackEvent("endless_wallet_reset", {mode:"endless",nameKey:run.nameKey,runId:run.id,walletResets:run.walletResets});
   render();
+  if (typeof saveAccountProgress === "function") void saveAccountProgress();
 }
 
 function compareEndlessRuns(left, right) {
@@ -174,8 +208,9 @@ function mergeEndlessPlayers(players) {
   const runs = new Map();
   for (const player of players.filter(Boolean)) {
     const old = runs.get(player.id);
-    if (!old || player.totalQuestions > old.totalQuestions ||
-        (player.totalQuestions === old.totalQuestions && player.isCompleted)) runs.set(player.id, player);
+    if (!old || (player.walletResets || 0) > (old.walletResets || 0) ||
+        ((player.walletResets || 0) === (old.walletResets || 0) && (player.totalQuestions > old.totalQuestions ||
+        (player.totalQuestions === old.totalQuestions && player.isCompleted)))) runs.set(player.id, player);
   }
   const best = new Map();
   for (const player of runs.values()) {
@@ -220,24 +255,28 @@ async function syncEndlessFromServer({refresh = false} = {}) {
 
 function renderEndlessSyncStatus() {
   if (state.endlessError) return `<p class="subtle-copy" role="status">${escapeHtml(state.endlessError)} Your run stays saved on this device. <button class="endless-text-button" data-endless-action="retry">Retry leaderboard sync</button></p>`;
-  return `<p class="subtle-copy" role="status">${state.pendingEndlessRuns.length ? "Syncing saved checkpoints…" : "Best run per player · checkpoints count while you play"}</p>`;
+  return `<p class="subtle-copy" role="status">${state.pendingEndlessRuns.length ? "Syncing saved progress…" : "Lifetime progress per player · continues across visits"}</p>`;
 }
 
 function renderEndlessLandingContent() {
-  const run = state.savedEndlessRun;
+  const run = getEndlessProfile(state.lastName || state.savedEndlessRun?.name);
+  const signedIn = typeof accountState !== "undefined" && accountState.user;
+  const start = signedIn
+    ? `<button class="primary-button" data-endless-action="start-profile" data-endless-name="${escapeHtml(accountState.user.username)}">Start as ${escapeHtml(accountState.user.username)}</button><p class="subtle-copy">Your account keeps one continuing Endless profile, starting with 10 coins.</p>`
+    : renderStartForm({buttonLabel:"Continue or start Endless Mode",helperCopy:"Use the same player name to continue your saved coins and lifetime progress. A new player starts with 10 coins."});
   return {
-    hero: `<p class="eyebrow">Endless Mode</p><h2 class="hero-title">One more neutrino.</h2><p class="hero-copy">Keep calling Tracks and Cascades for as long as you like. Every full pass reshuffles the 100-video catalog. Pause whenever you need a break.</p><div class="demo-facts"><span>No question limit</span><span>Save &amp; resume</span><span>Own leaderboard</span></div>${run ? `<div class="endless-saved"><h3 class="card-title">Continue ${escapeHtml(run.name)}’s run</h3><p>${run.totalQuestions} answered · ${run.totalCorrect} correct · ${run.coins} coins</p><div class="button-row"><button class="primary-button" data-endless-action="resume">Resume saved run</button><button class="ghost-button" data-endless-action="finish">Finish saved run</button></div></div>` : renderStartForm({buttonLabel:"Start endless run",helperCopy:"Start with 10 coins. Correct calls add coins, mistakes subtract them, and streaks earn more. Your run continues even if your coins drop below zero."})}<p class="endless-save-note">${typeof accountState !== "undefined" && accountState.user ? "Saved to your account so you can continue on another device." : "Guest progress stays on this device. Log in to save and resume across devices."}</p>`,
-    aside: `<div class="demo-aside-heading"><p class="eyebrow">Keep going</p><h3 class="card-title">Your best run counts.</h3></div><p class="hero-copy">Ranked by total correct calls, then accuracy and coins. Checkpoints update the Endless leaderboard while you play. Each player keeps their best run.</p><p class="subtle-copy">Pause &amp; save keeps the same run open. Finish run closes it and lets you start a new one. Endless results stay separate from the other leaderboards.</p>`,
+    hero: `<p class="eyebrow">Endless Mode</p><h2 class="hero-title">One more neutrino.</h2><p class="hero-copy">One continuing journey per player. Your coins, questions, and accuracy carry over whenever you return. Every full pass reshuffles the 100-video catalog.</p><div class="demo-facts"><span>Lifetime progress</span><span>Coins carry over</span><span>Reset wallet to 10</span></div>${run ? `<div class="endless-saved"><h3 class="card-title">Continue ${escapeHtml(run.name)}’s progress</h3><p>${run.totalQuestions} answered · ${run.totalCorrect} correct · ${run.coins} coins</p><div class="button-row"><button class="primary-button" data-endless-action="resume" data-endless-name="${escapeHtml(run.name)}">Continue playing</button><button class="ghost-button" data-endless-action="reset-wallet" data-endless-name="${escapeHtml(run.name)}">Reset to 10 coins</button></div><p class="subtle-copy">Resetting the wallet clears your current streak. Lifetime questions, accuracy, best streak, and trophies stay saved.</p></div>${signedIn ? "" : `<details class="missed-review"><summary>Switch player</summary>${start}</details>`}` : start}<p class="endless-save-note">${signedIn ? "Your continuing progress saves to your account across visits and devices." : "Guest progress is saved separately for each player name on this browser. Accounts can continue across devices when supported by the host."}</p>`,
+    aside: `<div class="demo-aside-heading"><p class="eyebrow">Keep going</p><h3 class="card-title">Your progress keeps counting.</h3></div><p class="hero-copy">Questions and correct calls belong to your player profile, across every visit. Pause whenever you need a break; there is no session finish line.</p><p class="subtle-copy">Reset to 10 coins gives your wallet a fresh start without erasing lifetime statistics or earned trophies. Endless results stay separate from the other leaderboards.</p>`,
   };
 }
 
 function renderEndlessLeaderboard(players = state.endlessPlayers) {
   const board = [...players].sort(compareEndlessRuns);
-  return board.length ? `<div class="leaderboard-scroll"><table class="leaderboard-table endless-leaderboard-table"><thead><tr><th>Rank</th><th>Player</th><th>Correct</th><th>Accuracy</th><th>Coins</th></tr></thead><tbody>${board.map((player,index) => `<tr><td>#${index+1}</td><td>${escapeHtml(player.name)}<small>${player.isCompleted ? "Finished" : "In progress"}</small></td><td>${player.totalCorrect}<small>/ ${player.totalQuestions} answered</small></td><td>${formatPercent(player.totalAccuracy)}</td><td>${player.finalCoins}</td></tr>`).join("")}</tbody></table></div>` : `<p class="empty-note">${state.endlessLoaded ? "Make your first call to join the Endless leaderboard." : "Loading Endless standings…"}</p>`;
+  return board.length ? `<div class="leaderboard-scroll"><table class="leaderboard-table endless-leaderboard-table"><thead><tr><th>Rank</th><th>Player</th><th>Correct</th><th>Accuracy</th><th>Coins</th></tr></thead><tbody>${board.map((player,index) => `<tr><td>#${index+1}</td><td>${escapeHtml(player.name)}<small>${player.isCompleted ? "Archived run" : "Lifetime progress"}</small></td><td>${player.totalCorrect}<small>/ ${player.totalQuestions} answered</small></td><td>${formatPercent(player.totalAccuracy)}</td><td>${player.finalCoins}</td></tr>`).join("")}</tbody></table></div>` : `<p class="empty-note">${state.endlessLoaded ? "Make your first call to join the Endless leaderboard." : "Loading Endless standings…"}</p>`;
 }
 
 function renderEndlessToolbar(run) {
-  return `<div class="endless-toolbar"><div><strong>${run.totalCorrect} correct / ${run.totalQuestions} answered</strong><span>${formatPercent(run.totalQuestions ? run.totalCorrect / run.totalQuestions : 0)} accuracy · Best streak ${run.bestStreak}</span></div><div class="button-row"><button class="secondary-button" data-endless-action="pause">Pause &amp; save</button><button class="ghost-button" data-endless-action="finish">Finish run</button><button class="ghost-button" data-action="open-analysis">Endless leaderboard</button></div></div>`;
+  return `<div class="endless-toolbar"><div><strong>${run.totalCorrect} correct / ${run.totalQuestions} lifetime answers</strong><span>${formatPercent(run.totalQuestions ? run.totalCorrect / run.totalQuestions : 0)} accuracy · Best streak ${run.bestStreak} · ${run.walletResets || 0} wallet resets</span></div><div class="button-row"><button class="secondary-button" data-endless-action="pause">Pause &amp; save</button><button class="ghost-button" data-endless-action="reset-wallet">Reset to 10 coins</button><button class="ghost-button" data-action="open-analysis">Analysis &amp; Export</button></div><p class="subtle-copy">Resetting clears coins and the current streak; lifetime stats and trophies stay saved.</p></div>`;
 }
 
 function renderEndlessRunView(run) {
@@ -248,13 +287,13 @@ function renderEndlessRunView(run) {
 }
 
 function renderEndlessResultsView(run) {
-  return `<section class="results-layout appear"><article class="panel"><div class="panel-inner"><p class="eyebrow">Endless Mode · Run finished</p><h2 class="hero-title">${escapeHtml(run.name)}, that’s a run.</h2><div class="endless-saved"><strong>${run.totalCorrect} correct / ${run.totalQuestions} answered</strong><p>${formatPercent(run.totalAccuracy)} accuracy · ${run.finalCoins} coins · Best streak ${run.bestStreak}</p></div>${renderEndlessSyncStatus()}<div class="button-row"><button class="primary-button" data-action="play-again">Start another endless run</button><button class="ghost-button" data-action="go-home">Home</button></div></div></article><aside class="panel"><div class="panel-inner"><h2 class="card-title">Endless leaderboard</h2>${renderEndlessLeaderboard()}</div></aside></section>`;
+  return `<section class="results-layout appear"><article class="panel"><div class="panel-inner"><p class="eyebrow">Endless Mode · Run finished</p><h2 class="hero-title">${escapeHtml(run.name)}, that’s a run.</h2><div class="endless-saved"><strong>${run.totalCorrect} correct / ${run.totalQuestions} answered</strong><p>${formatPercent(run.totalAccuracy)} accuracy · ${run.finalCoins} coins · Best streak ${run.bestStreak}</p></div>${renderEndlessSyncStatus()}<div class="button-row"><button class="primary-button" data-action="play-again">Continue Endless Mode</button><button class="ghost-button" data-action="go-home">Home</button></div></div></article><aside class="panel"><div class="panel-inner"><h2 class="card-title">Endless leaderboard</h2>${renderEndlessLeaderboard()}</div></aside></section>`;
 }
 
 document.addEventListener("click", event => {
   const button = event.target.closest("[data-endless-action]");
   if (!button) return;
-  const actions = {resume:resumeEndlessRun, pause:pauseEndlessRun, finish:finishEndlessRun, next:advanceEndlessRun, retry:() => { void syncEndlessFromServer({refresh:true}); }};
-  actions[button.dataset.endlessAction]?.();
+  const actions = {"start-profile":beginEndlessRun, resume:resumeEndlessRun, pause:pauseEndlessRun, "reset-wallet":resetEndlessWallet, next:advanceEndlessRun, retry:() => { void syncEndlessFromServer({refresh:true}); }};
+  actions[button.dataset.endlessAction]?.(button.dataset.endlessName);
 });
 window.addEventListener("online", () => { void syncEndlessFromServer({refresh:true}); });

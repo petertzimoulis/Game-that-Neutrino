@@ -17,6 +17,41 @@ def checkpoint(run_id="run-a", name="Alice", total=10, correct=10, coins=28, fin
 
 
 class EndlessContract:
+    def test_reset_to_ten_preserves_lifetime_totals_and_private_ownership(self):
+        self.endless.save(checkpoint(total=150, correct=120, coins=190))
+        reset = {**checkpoint(total=150, correct=120, coins=10), 'walletResets': 1}
+        saved = self.endless.save(reset)
+        self.assertEqual(saved['finalCoins'], 10)
+        self.assertEqual(saved['totalCorrect'], 120)
+        self.assertEqual(saved['walletResets'], 1)
+        self.assertEqual(self.endless.save(reset), saved)
+        self.assertEqual(self.endless.leaderboard()['players'][0]['finalCoins'], 10)
+        with self.assertRaises(EndlessError) as error:
+            self.endless.save({**reset, 'walletResets': 2, 'checkpointKey': 'b' * 64})
+        self.assertEqual(error.exception.status, 403)
+        resumed = self.endless.save({**reset, 'totalQuestions':151,'totalCorrect':121,'finalCoins':11})
+        self.assertEqual(resumed['totalQuestions'], 151)
+        self.assertEqual(resumed['finalCoins'], 11)
+
+    def test_stale_pre_reset_checkpoints_cannot_restore_old_coins(self):
+        original = checkpoint(total=100, correct=80, coins=100)
+        self.endless.save(original)
+        reset = self.endless.save({**original, 'finalCoins':10, 'walletResets':1})
+        self.assertEqual(self.endless.save(original), reset)
+        with self.assertRaises(EndlessError):
+            self.endless.save({**original,'totalQuestions':101,'totalCorrect':81,'finalCoins':101})
+        for changes in [{'finalCoins':11}, {'totalCorrect':79}, {'bestStreak':9}, {'totalQuestions':99}]:
+            with self.assertRaises(EndlessError):
+                self.endless.save({**original, 'finalCoins':10, 'walletResets':2, **changes})
+        self.assertEqual(self.endless.leaderboard()['players'][0], reset)
+
+    def test_offline_reset_then_new_answers_can_sync_together(self):
+        self.endless.save(checkpoint(total=100, correct=80, coins=100))
+        updated = self.endless.save({**checkpoint(total=105,correct=84,coins=14),'walletResets':3})
+        self.assertEqual(updated['walletResets'], 3)
+        self.assertEqual(updated['totalQuestions'], 105)
+        self.assertEqual(updated['finalCoins'], 14)
+
     def test_checkpoint_persists_beyond_100_and_retries_are_idempotent(self):
         record = checkpoint(total=150, correct=120, coins=190)
         original = self.endless.save(record)
@@ -127,7 +162,13 @@ class PostgresEndless(EndlessContract, unittest.TestCase):
         progress = {"selectedMode":"endless","currentRun":None,"endlessRun":{
             "id":"run-a","name":"Alice","mode":"endless","checkpointKey":"a"*64,
             "answers":[],"videoOrder":["catalog/one"],"currentIndex":0,
-            "totalQuestions":200,"totalCorrect":150,"coins":210,"phase":"question"}}
+            "totalQuestions":200,"totalCorrect":150,"coins":210,"walletResets":0,"phase":"question"}}
         self.assertEqual(player.post("/api/account/progress", json={"owner":"Alice","revision":0,"progress":progress}, headers=headers).status_code, 200)
         self.assertEqual(other.post("/api/auth/login", json={"username":"Alice","password":"Endless test only"}, headers=headers).status_code, 200)
         self.assertEqual(other.get("/api/account").json["progress"]["endlessRun"]["totalQuestions"], 200)
+        progress['endlessRun'].update(coins=10, walletResets=1)
+        self.assertEqual(player.post('/api/account/progress', json={'owner':'Alice','revision':1,'progress':progress}, headers=headers).status_code, 200)
+        restored = other.get('/api/account').json['progress']['endlessRun']
+        self.assertEqual(restored['coins'], 10)
+        self.assertEqual(restored['walletResets'], 1)
+        self.assertEqual(restored['totalQuestions'], 200)

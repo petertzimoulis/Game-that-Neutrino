@@ -34,6 +34,9 @@ def validate_checkpoint(payload):
     if not isinstance(key, str) or not re.fullmatch(r"[a-f0-9]{64}", key):
         raise EndlessError(400, "Missing the private save key for this run.")
     total, correct, coins, streak = (payload.get(field) for field in ["totalQuestions", "totalCorrect", "finalCoins", "bestStreak"])
+    wallet_resets = payload.get("walletResets", 0)
+    if type(wallet_resets) is not int or not 0 <= wallet_resets <= 10**12:
+        raise EndlessError(400, "Invalid wallet reset counter.")
     if any(type(value) is not int for value in [total, correct, coins, streak]):
         raise EndlessError(400, "Invalid Endless Mode score.")
     if not 1 <= total <= 10**12 or not 0 <= correct <= total or not 0 <= streak <= correct or not 10 - 2 * total <= coins <= 10 + 3 * total:
@@ -52,7 +55,7 @@ def validate_checkpoint(payload):
               "startedAt": started.astimezone(timezone.utc).isoformat(), "updatedAt": updated,
               "completedAt": updated if payload["isCompleted"] else None,
               "totalQuestions": total, "totalCorrect": correct, "totalAccuracy": correct / total,
-              "finalCoins": coins, "bestStreak": streak, "isCompleted": payload["isCompleted"]}
+              "finalCoins": coins, "bestStreak": streak, "walletResets": wallet_resets, "isCompleted": payload["isCompleted"]}
     return record, hashlib.sha256(key.encode()).hexdigest()
 
 
@@ -78,11 +81,22 @@ class EndlessStore:
             if old["nameKey"] != record["nameKey"] or old["startedAt"] != record["startedAt"]:
                 raise EndlessError(409, "The player and start time of a saved run cannot change.")
             delta = record["totalQuestions"] - old["totalQuestions"]
-            if delta < 0:
+            reset_delta = record["walletResets"] - old.get("walletResets", 0)
+            if reset_delta < 0:
+                if delta <= 0 and not record["isCompleted"]:
+                    return old
+                raise EndlessError(409, "The wallet was reset on another device. Resume the latest saved progress.")
+            if reset_delta > 0:
+                if (old["isCompleted"] or record["isCompleted"] or delta < 0 or
+                    not 0 <= record["totalCorrect"] - old["totalCorrect"] <= delta or
+                    record["bestStreak"] < old["bestStreak"] or
+                    not 10 - 2 * delta <= record["finalCoins"] <= 10 + 3 * delta):
+                    raise EndlessError(409, "Reset the wallet to 10 coins without changing lifetime progress.")
+            elif delta < 0:
                 if record["isCompleted"]:
                     raise EndlessError(409, "A newer checkpoint exists. Resume the latest saved progress before finishing.")
                 return old
-            if delta == 0:
+            elif delta == 0:
                 if any(record[field] != old[field] for field in ["totalCorrect", "finalCoins", "bestStreak"]):
                     raise EndlessError(409, "An answered checkpoint cannot be rewritten.")
                 if old["isCompleted"] or not record["isCompleted"]:

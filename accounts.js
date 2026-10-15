@@ -75,6 +75,8 @@ function writeLocalSnapshot(progress) {
   state.selectedMode = ["demo", "friday", "quiz", "quick", "endless"].includes(progress.selectedMode) ? progress.selectedMode : "demo";
   state.pendingCollaboratorRuns = Array.isArray(progress.pendingRuns) ? progress.pendingRuns : [];
   state.savedEndlessRun = progress.endlessRun || (state.currentRun?.mode === "endless" ? state.currentRun : null);
+  state.endlessProfiles = loadStorage(STORAGE_KEYS.endlessProfiles, {});
+  if (state.savedEndlessRun && typeof saveEndlessProfile === "function") saveEndlessProfile(state.savedEndlessRun);
   state.pendingEndlessRuns = Array.isArray(progress.pendingEndless) ? progress.pendingEndless : [];
   for (const [key, value] of Object.entries({
     currentRun: state.currentRun, lastCompletedRun: state.lastCompletedRun,
