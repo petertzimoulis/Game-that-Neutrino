@@ -2,10 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Game That Neutrino — Collaborator Game</title>
     <meta name="description" content="Classify IceCube event displays, earn coins, and compare your intuition with the crowd. A neutrino classification game by Peter Tzimoulis." />
-    <link rel="stylesheet" href="./styles.css?v=endless-full-20261015-2" />
+    <link rel="stylesheet" href="./styles.css?v=mobile-ui-20261016-1" />
   </head>
   <body>
     <div class="background-glow background-glow-left"></div>
@@ -19,7 +19,8 @@
           <h1 class="brand-title">Game That Neutrino</h1>
         </div>
 
-        <div class="topbar-actions">
+        <button type="button" class="ghost-button navigation-toggle" id="navigation-toggle" data-action="toggle-navigation" aria-controls="site-navigation" aria-expanded="false" aria-label="Open navigation menu">Menu <span aria-hidden="true">☰</span></button>
+        <nav class="topbar-actions" id="site-navigation" aria-label="Main navigation">
           <div id="account-controls"></div>
           <button type="button" class="ghost-button trophy-nav" data-action="open-achievements">🏆 Achievements</button>
           <button type="button" class="ghost-button" data-action="open-intro">About the game</button>
@@ -48,7 +49,7 @@
           >
             Analysis &amp; Export
           </button>
-        </div>
+        </nav>
       </header>
 
       <main id="app" class="app-root" aria-live="polite"></main>
@@ -70,7 +71,7 @@
 
     <script src="./site-config.js"></script>
     <script src="./endless.js?v=endless-full-20261015-2"></script>
-    <script src="./app.js?v=two-modes-20261015-1"></script>
+    <script src="./app.js?v=mobile-ui-20261016-1"></script>
     <script src="./accounts.js?v=two-modes-20261015-1"></script>
   </body>
 </html>

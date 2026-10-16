@@ -2347,3 +2347,87 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
   .about-bio-heading .about-name { font-size: clamp(2.6rem, 10vw, 4.5rem); }
   .about-portrait { max-width: 240px; }
 }
+
+/* Phone layouts keep the content first, with navigation available on demand. */
+.navigation-toggle { display: none; }
+@media (max-width: 600px) {
+  html { -webkit-text-size-adjust: 100%; }
+  .page-shell, .is-playing .page-shell { width: 100%; padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  .topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; margin-bottom: 18px; }
+  .topbar > div:first-child { min-width: 0; }
+  .topbar .brand-title, .is-playing .brand-title { font-size: clamp(1.1rem, 5vw, 1.45rem); line-height: 1.12; }
+  .topbar .eyebrow { font-size: .6rem; letter-spacing: .12em; }
+  .navigation-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 12px; font-size: .85rem; }
+  #site-navigation { display: none; grid-column: 1 / -1; width: 100%; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 18px; background: var(--bg-panel-strong); }
+  #site-navigation.is-open { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #site-navigation #account-controls { grid-column: 1 / -1; }
+  #site-navigation button, #site-navigation .button-link { display: flex; justify-content: center; align-items: center; width: 100%; min-height: 46px; padding: 10px 8px; font-size: .85rem; line-height: 1.35; }
+  #site-navigation .account-button { display: grid; text-align: center; }
+  .welcome-layout > *, .results-layout > *, .about-layout > *, .panel-inner, .modal-inner { min-width: 0; }
+  .panel, .modal-panel { border-radius: 22px; }
+  .panel-inner { padding: 18px; }
+  .hero-card .hero-title { font-size: clamp(1.6rem, 7.5vw, 2rem); line-height: 1.1; }
+  .hero-copy, .about-copy { font-size: 1rem; line-height: 1.65; }
+  .text-input, input[type="password"], input[type="text"], select, textarea { font-size: 16px; min-height: 48px; }
+  .button-row > button, .button-row > .button-link { min-height: 46px; }
+  .name-form .button-row { display: grid; grid-template-columns: 1fr; }
+  .demo-facts { gap: 6px; margin: 18px 0; }
+  .demo-facts span { font-size: .72rem; padding: 7px 9px; }
+  .mode-toggle { min-width: 0; padding: 12px 10px; }
+  .mode-toggle strong { font-size: .88rem; }
+  .mode-toggle span { font-size: .72rem; line-height: 1.4; }
+  .status-strip-compact { width: 100%; }
+  .choice-button, .wager-toggle, .help-inline-button { touch-action: manipulation; }
+  .leaderboard-scroll, .table-shell { max-width: 100%; overscroll-behavior-x: contain; }
+  .modal-panel { max-height: calc(100dvh - 24px); }
+  .modal-inner { padding: 18px; overscroll-behavior-y: contain; }
+  .modal-title { font-size: 1.5rem; overflow-wrap: anywhere; }
+  .account-backdrop, .trophy-backdrop { padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom)); }
+  .site-credits { font-size: .75rem; line-height: 1.7; margin-top: 22px; }
+  .about-page .topbar { display: flex; gap: 16px; }
+  .about-page .topbar-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; gap: 8px; }
+  .about-page .topbar-actions a { min-height: 46px; padding: 10px 8px; font-size: .84rem; }
+  .about-layout { gap: 16px; }
+  .about-bio .panel-inner, .about-contact .panel-inner, .about-credit .panel-inner { padding: 20px; }
+  .about-bio-heading { grid-template-columns: minmax(0, 1fr) 108px; gap: 14px; margin-bottom: 22px; }
+  .about-bio-heading .eyebrow { font-size: .65rem; letter-spacing: .1em; line-height: 1.6; }
+  .about-bio-heading .about-name { font-size: clamp(1.6rem, 7.1vw, 2.15rem); line-height: 1.05; margin-top: 10px; }
+  .about-portrait { max-width: 108px; border-radius: 14px; }
+  .about-introduction { font-size: 1.05rem; line-height: 1.5; margin-bottom: 18px; }
+  .about-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 12px; margin-top: 22px; padding-top: 20px; }
+  .about-facts > div:last-child { grid-column: 1 / -1; }
+  .about-facts dd { font-size: .9rem; overflow-wrap: anywhere; }
+  .about-monogram { display: none; }
+  .about-contact .card-title { font-size: 1.6rem; }
+  .about-email { min-height: 64px; padding: 16px 0; }
+  .about-credit .panel-inner { gap: 18px; }
+}
+@media (max-width: 350px) {
+  .about-bio-heading { grid-template-columns: minmax(0, 1fr) 88px; gap: 10px; }
+  .about-bio-heading .about-name { font-size: 1.4rem; }
+  .about-portrait { max-width: 88px; }
+  .mode-toggle strong { font-size: .79rem; }
+}
+@media (min-width: 601px) and (max-width: 980px) {
+  body:not(.about-page) .topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; }
+  .navigation-toggle { display: inline-flex; gap: 8px; align-items: center; min-height: 46px; }
+  #site-navigation { display: none; grid-column: 1 / -1; width: 100%; }
+  #site-navigation.is-open { display: flex; }
+}
+@media (max-width: 600px) {
+  .choice-topline strong { font-size: .98rem; }
+  .choice-percent { font-size: .84rem; }
+  .endless-toolbar { gap: 10px; padding: 12px 0; margin-bottom: 14px; }
+  .endless-toolbar > div:first-child { gap: 5px; }
+  .endless-toolbar strong { font-size: .85rem; line-height: 1.5; }
+  .endless-toolbar > div > span { font-size: .74rem; line-height: 1.5; }
+  .endless-toolbar .button-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
+  .endless-toolbar button { min-height: 46px; padding: 8px 6px; font-size: .74rem; line-height: 1.4; }
+  .endless-toolbar > p { font-size: .73rem; line-height: 1.5; margin: 0; }
+}
+@media (max-width: 350px) {
+  .choice-topline { flex-direction: column; align-items: flex-start; }
+}
+@media (max-width: 600px) {
+  #site-navigation #analysis-button { display: flex; }
+}

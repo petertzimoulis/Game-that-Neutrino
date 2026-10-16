@@ -245,6 +245,7 @@ initializeAnalyticsTracking();
 if (Object.values(state.localTrophies).some(profile => !profile.synced)) void syncAchievements();
 
 document.addEventListener("click", (event) => {
+  if (event.target.closest("#site-navigation button, #site-navigation a")) setMobileNavigation(false);
   if (event.target.classList.contains("modal-backdrop")) {
     if (state.showAchievements) { closeAchievements(); return; }
     state.showHelp = false;
@@ -290,6 +291,9 @@ document.addEventListener("click", (event) => {
   const { action } = actionButton.dataset;
 
   switch (action) {
+    case "toggle-navigation":
+      setMobileNavigation(document.querySelector("#navigation-toggle")?.getAttribute("aria-expanded") !== "true");
+      break;
     case "open-achievements":
       state.showAchievements = true;
       state.achievementReturnFocus = actionButton;
@@ -5172,3 +5176,17 @@ function getCollaboratorRunStatus(run) {
 }
 
 window.addEventListener("online", () => { void syncCollaboratorPlayersFromServer(); });
+
+function setMobileNavigation(open) {
+  document.querySelector("#site-navigation")?.classList.toggle("is-open", open);
+  const toggle = document.querySelector("#navigation-toggle");
+  toggle?.setAttribute("aria-expanded", String(open));
+  toggle?.setAttribute("aria-label", open ? "Close navigation menu" : "Open navigation menu");
+}
+document.addEventListener("keydown", event => {
+  const toggle = document.querySelector("#navigation-toggle");
+  if (event.key === "Escape" && toggle?.getAttribute("aria-expanded") === "true") {
+    setMobileNavigation(false);
+    toggle.focus();
+  }
+});
