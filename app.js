@@ -4966,7 +4966,7 @@ function renderIntro() {
     <div class="intro-game-heading"><p class="eyebrow">Your mission</p><h3>Watch. Classify. Collect coins.</h3><p>${getActiveMode() === "endless" ? "Keep classifying for as long as you like. Pause and save your run whenever you need a break." : "Play 5 random clips drawn from every set. Track or Cascade? Make your call and get instant feedback."}</p></div>
     ${renderGameMechanics()}
     <p class="subtle-copy">Earn gold trophies and compare achievement totals across all modes.</p>
-    <div class="intro-bottom"><div class="intro-credits"><span>Created by <strong>Peter Tzimoulis</strong></span><span>Credits &amp; acknowledgments: <a href="https://www.zooniverse.org/projects/icecubeobservatory/name-that-neutrino" target="_blank" rel="noopener noreferrer"><strong>Name That Neutrino</strong> on Zooniverse ↗</a> · <span>Drexel University</span> · <strong>IceCube Collaboration</strong></span></div><button type="button" class="primary-button" data-action="close-intro">Start playing →</button></div>
+    <div class="intro-bottom"><div class="intro-credits"><span>Created by <a href="./about-me.html" aria-label="About the Dev — Peter Tzimoulis"><strong>Peter Tzimoulis</strong></a></span><span>Credits &amp; acknowledgments: <a href="https://www.zooniverse.org/projects/icecubeobservatory/name-that-neutrino" target="_blank" rel="noopener noreferrer"><strong>Name That Neutrino</strong> on Zooniverse ↗</a> · <span>Drexel University</span> · <strong>IceCube Collaboration</strong></span></div><button type="button" class="primary-button" data-action="close-intro">Start playing →</button></div>
   </section></div>`;
   requestAnimationFrame(() => root.querySelector(".intro-panel")?.focus());
 }
